@@ -1,0 +1,85 @@
+"""Typed access to config.yaml and .env.
+
+Every module reads parameters through here — nothing downstream may hard-code a
+value that belongs in config.yaml (SPEC.md working agreement).
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+from dotenv import load_dotenv
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@dataclass(frozen=True)
+class DataConfig:
+    exchange: str
+    interval: str
+    start_date: str  # ISO date; symbols listed later simply start at listing
+    end_date: str | None  # None = up to the most recent complete bar
+    universe: list[str]
+
+
+@dataclass(frozen=True)
+class IngestConfig:
+    request_timeout_s: float
+    max_retries: int
+    retry_backoff_s: float
+    min_request_interval_s: float
+
+
+@dataclass(frozen=True)
+class DbConfig:
+    host: str
+    port: int
+    user: str
+    password: str
+    dbname: str
+
+    @property
+    def dsn(self) -> str:
+        return (
+            f"host={self.host} port={self.port} user={self.user} "
+            f"password={self.password} dbname={self.dbname}"
+        )
+
+
+@dataclass(frozen=True)
+class Config:
+    data: DataConfig
+    ingest: IngestConfig
+    db: DbConfig
+
+
+def load_config(path: Path | None = None) -> Config:
+    load_dotenv(REPO_ROOT / ".env")
+    with open(path or REPO_ROOT / "config.yaml") as f:
+        raw = yaml.safe_load(f)
+
+    return Config(
+        data=DataConfig(
+            exchange=raw["data"]["exchange"],
+            interval=raw["data"]["interval"],
+            start_date=raw["data"]["start_date"],
+            end_date=raw["data"]["end_date"],
+            universe=list(raw["data"]["universe"]),
+        ),
+        ingest=IngestConfig(
+            request_timeout_s=float(raw["ingest"]["request_timeout_s"]),
+            max_retries=int(raw["ingest"]["max_retries"]),
+            retry_backoff_s=float(raw["ingest"]["retry_backoff_s"]),
+            min_request_interval_s=float(raw["ingest"]["min_request_interval_s"]),
+        ),
+        db=DbConfig(
+            host=os.environ.get("POSTGRES_HOST", "localhost"),
+            port=int(os.environ.get("POSTGRES_PORT", "5433")),
+            user=os.environ.get("POSTGRES_USER", "statarb"),
+            password=os.environ.get("POSTGRES_PASSWORD", "statarb"),
+            dbname=os.environ.get("POSTGRES_DB", "statarb"),
+        ),
+    )

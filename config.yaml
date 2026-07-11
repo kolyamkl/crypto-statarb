@@ -30,5 +30,6 @@ ingest:
   request_timeout_s: 15
   max_retries: 5
   retry_backoff_s: 2.0          # exponential base: 2, 4, 8, ...
-  # Binance USDT-M rate limit is 2400 weight/min; we stay far below it.
-  min_request_interval_s: 0.25
+  # Binance USDT-M rate limit is 2400 weight/min; klines at limit=1500 cost weight 10,
+  # so 0.35s spacing keeps us at ~70% of the cap even in the worst case.
+  min_request_interval_s: 0.35
