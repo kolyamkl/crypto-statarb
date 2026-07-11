@@ -1,0 +1,26 @@
+# Secrets & local env
+.env
+
+# Data — never committed (see data_provenance.md for how to regenerate)
+data/*
+!data/.gitkeep
+*.dump
+*.sql.gz
+*.parquet
+*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Notebooks
+notebooks/.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

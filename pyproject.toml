@@ -1,0 +1,29 @@
+[project]
+name = "crypto-statarb"
+version = "0.1.0"
+description = "Statistical-arbitrage research on crypto pairs: cointegration-based pair selection, Kalman-filter hedge ratios, z-score spread trading, cost-aware backtesting, walk-forward validation"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "statsmodels>=0.14",
+    "scipy>=1.13",
+    "matplotlib>=3.9",
+    "requests>=2.32",
+    "psycopg[binary]>=3.2",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
