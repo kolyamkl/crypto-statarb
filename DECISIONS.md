@@ -133,3 +133,38 @@ limitations section at M8. Newest entries at the bottom.
 - **Fat tails on display**: z spikes to ±8 (Gaussian would never), and 34–40%
   of entries end in stop-outs. Expected for crypto; M4 will price what those
   stop-outs cost, and entry/stop levels are honest M5 tuning candidates.
+
+## 2026-08-22 — M4 backtest engine choices
+
+- **Next-bar execution via `desired.shift(1)`**: decided at bar close, filled at
+  the next bar's OPEN — which in a 24/7 perp market equals the prior close to
+  within microstructure noise, so the fill realism is priced by the slippage
+  parameter rather than by intrabar modelling. A unit test asserts the signal
+  bar's own move is never captured.
+- **Costs: 5bps taker + 2bps slippage per unit turnover** (Binance USDT-M VIP0;
+  liquid majors). Config-driven; M7 doubles them as a stress.
+- **Funding charged from ACTUAL stored events** joined to the bar holding the
+  event timestamp — never an assumed 8h grid (the SOL/FTX cadence finding).
+- **Sizing: unit gross per pair, legs split 1:beta, beta FROZEN at entry.**
+  Re-hedging every bar would add turnover cost for negligible drift at
+  delta=1e-5, and a fixed ratio per trade matches live execution. Non-positive
+  beta at entry raises — a long-long "pair" is never traded silently.
+- **Arithmetic PnL on constant unit capital (no compounding)**: makes the
+  decomposition exactly additive (net = gross − fee − slip + funding), which the
+  reconciliation test asserts to float precision. Compounded metrics are M6's
+  concern.
+
+## 2026-08-22 — M4 result: honest negative — no gross edge as configured
+
+- Train-window portfolio: gross −1.5%, costs −35.6%, funding +0.5%, net −36.5%.
+  The engine's cost arithmetic reconciles with hand calculation to the bp.
+- **Diagnosis (kept as evidence, see reports/m4_backtest_notes.md):** a
+  well-functioning Kalman filter produces near-WHITE innovations by
+  construction; at delta=1e-5 the filter absorbs the slow M2 mean reversion
+  into the state, so the traded residual has nothing left to predict. M3's
+  "holds are hours, not days" was the early symptom.
+- **Funding nets out on a hedged book** (+0.5% over 4y) — a real, evidenced
+  finding, not an assumption.
+- M5 owns the (training-only) response: slower delta, or trade the
+  frozen-hedge spread rather than the innovation, cost-aware entries, wider
+  thresholds, coarser bars. Flagged to Kolya before any tuning happens.

@@ -65,6 +65,12 @@ class SignalsConfig:
 
 
 @dataclass(frozen=True)
+class BacktestConfig:
+    taker_fee_bps: float
+    slippage_bps: float
+
+
+@dataclass(frozen=True)
 class DbConfig:
     host: str
     port: int
@@ -86,6 +92,7 @@ class Config:
     validation: ValidationConfig
     pairs: PairsConfig
     signals: SignalsConfig
+    backtest: BacktestConfig
     ingest: IngestConfig
     db: DbConfig
 
@@ -124,6 +131,10 @@ def load_config(path: Path | None = None) -> Config:
             entry_z=float(raw["signals"]["entry_z"]),
             exit_z=float(raw["signals"]["exit_z"]),
             stop_z=float(raw["signals"]["stop_z"]),
+        ),
+        backtest=BacktestConfig(
+            taker_fee_bps=float(raw["backtest"]["taker_fee_bps"]),
+            slippage_bps=float(raw["backtest"]["slippage_bps"]),
         ),
         ingest=IngestConfig(
             request_timeout_s=float(raw["ingest"]["request_timeout_s"]),

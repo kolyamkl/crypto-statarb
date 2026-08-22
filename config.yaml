@@ -60,6 +60,12 @@ signals:
   exit_z: 0.0                   # exit when the spread is back at its rolling mean
   stop_z: 3.0                   # stop-out: 3 sigma says the equilibrium may have broken
 
+backtest:
+  taker_fee_bps: 5.0            # Binance USDT-M VIP0 taker (0.05%); doubled in M7 stress
+  slippage_bps: 2.0             # per leg per fill — liquid majors, 1h bars; stressed in M7
+  # Sizing: unit gross capital per pair when active, split 1:beta across legs so
+  # the pair is return-neutral; beta frozen at entry; portfolio = equal-weight pairs.
+
 ingest:
   request_timeout_s: 15
   max_retries: 5
