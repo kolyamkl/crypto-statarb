@@ -46,3 +46,53 @@ limitations section at M8. Newest entries at the bottom.
   kline history for this universe is continuous over 2021→2026. First-bar dates
   for ARBUSDT (2023-03) and OPUSDT (2022-06) reflect their listings and are
   recorded in `symbols.onboard_date`, not backfilled.
+
+## 2026-08-22 — M2 pair selection methodology
+
+- **Train/test split at 2024-12-31** (config `validation.train_end`): 4y train,
+  ~1.5y untouched test. Pair SELECTION is treated as tuning, so M2 sees training
+  data only — picking pairs on the full sample would leak test-period info into
+  the strategy (selection look-ahead). *Auto-selected default, pending Kolya's
+  review; config-driven.*
+- **Log prices for the hedge regression**: β in log space is a scale-free return
+  ratio, comparable across pairs regardless of price level.
+- **Engle–Granger via `statsmodels.coint`, both directions, screened on the
+  WORSE p-value**: EG is not symmetric in which leg is regressed on which; a
+  genuinely cointegrated pair passes both ways. `coint` uses MacKinnon critical
+  values that account for the estimated hedge ratio — a plain ADF on OLS
+  residuals would be too lenient. Johansen deferred (optional per spec); EG is
+  the interview-explainable core.
+- **Half-life gate [24, 720] hourly bars (1–30d)** from an AR(1) fit on the
+  spread: <1d reverts too fast to capture after costs on hourly bars; >30d ties
+  up capital and weakens the stat-arb premise. This is a tradeability prior,
+  not a statistical test.
+- **Multiple testing acknowledged, not corrected**: 91 tests at α=0.05 → ~4.5
+  false positives expected. Rather than a Bonferroni-style correction (which
+  would kill everything), the screen is treated as a candidate filter backed by
+  an economic-plausibility check (reports/m2_pair_notes.md); the real arbiter
+  is out-of-sample M5.
+- **Kalman filter hand-rolled** (~20 lines) with Chan's single-knob
+  parameterization (`delta=1e-5`), state seeded by OLS on a 720-bar burn-in;
+  filtered (one-sided) estimates only — smoothing would leak the future.
+  Causality is enforced by a unit test that mutates future observations and
+  asserts earlier output is bit-identical. Burn-in bars are never tradeable.
+- **Static OLS β in the ranked table, Kalman β as diagnostic**: the screen ranks
+  on full-train statistics; the time-varying β becomes the trading hedge in M3+.
+  The 30d rolling-OLS comparison plot shows why: rolling OLS whipsaws (even
+  flips negative on AVAX/NEAR); the Kalman path is stable.
+
+## 2026-08-22 — M2 result: 1 of 91 pairs passes
+
+- **Finding:** hourly return correlation is high everywhere (0.44–0.85) but only
+  AVAX/NEAR passes EG at 5% with a tradeable half-life (~28d). 4 pairs under
+  α=0.05 is what chance alone predicts (~4.5) — only AVAX/NEAR (p=0.002) beats
+  the multiple-testing bar comfortably, and it is also the pair with the
+  cleanest economic story (same-generation alt-L1 substitutes).
+- **Kept as evidence** in `pair_screen` (all 91 rows) and reports/. The thin
+  pass rate goes in the final report's "what didn't work" section: long-window
+  cointegration screening on crypto majors yields almost no tradeable pairs.
+- **Open decision for M3** (Kolya to pick at review): trade AVAX/NEAR alone, or
+  add the economically-sensible near-misses ADA/DOT + ADA/LTC under a
+  documented, post-hoc relaxation of the half-life bound to ~70d. Re-screening
+  on a shorter window was considered and rejected as data snooping; M5's
+  walk-forward re-screens per window anyway.

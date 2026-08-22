@@ -26,6 +26,24 @@ data:
     - ARBUSDT                   # L2 cluster (listed 2023 — shorter history, kept for survivorship honesty)
     - OPUSDT
 
+validation:
+  # Everything after train_end is untouched until M5's out-of-sample evaluation.
+  # Pair SELECTION already counts as tuning, so M2 may only see data <= train_end;
+  # picking pairs on the full sample would leak test-period info into the strategy.
+  # PROPOSAL pending review: 4y train / ~1.5y test out of the 5.5y of history.
+  train_end: "2024-12-31"
+
+pairs:
+  price_field: close            # bar close of the perp
+  use_log_prices: true          # hedge in log space -> beta is scale-free (a return ratio)
+  min_overlap_bars: 8760        # require >=1y of joint hourly history in the training window
+  adf_alpha: 0.05               # EG screen level; 91 pairs -> ~4-5 false positives expected (DECISIONS.md)
+  half_life_min_bars: 24        # <1 day: reversion too fast to capture after costs on 1h bars
+  half_life_max_bars: 720       # >30 days: capital tied up too long, weak stat-arb premise
+  kalman:
+    delta: 1.0e-5               # state-noise ratio (Chan's convention); tune on training data only
+    burn_in_bars: 720           # OLS warm-up that initializes the filter; never tradeable bars
+
 ingest:
   request_timeout_s: 15
   max_retries: 5

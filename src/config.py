@@ -34,6 +34,28 @@ class IngestConfig:
 
 
 @dataclass(frozen=True)
+class ValidationConfig:
+    train_end: str  # ISO date; last day visible to any selection/tuning step (M2-M4)
+
+
+@dataclass(frozen=True)
+class KalmanConfig:
+    delta: float  # state-to-observation noise ratio; larger = faster-moving beta
+    burn_in_bars: int  # OLS warm-up used to initialize the filter state
+
+
+@dataclass(frozen=True)
+class PairsConfig:
+    price_field: str
+    use_log_prices: bool
+    min_overlap_bars: int
+    adf_alpha: float
+    half_life_min_bars: float
+    half_life_max_bars: float
+    kalman: KalmanConfig
+
+
+@dataclass(frozen=True)
 class DbConfig:
     host: str
     port: int
@@ -52,6 +74,8 @@ class DbConfig:
 @dataclass(frozen=True)
 class Config:
     data: DataConfig
+    validation: ValidationConfig
+    pairs: PairsConfig
     ingest: IngestConfig
     db: DbConfig
 
@@ -68,6 +92,21 @@ def load_config(path: Path | None = None) -> Config:
             start_date=raw["data"]["start_date"],
             end_date=raw["data"]["end_date"],
             universe=list(raw["data"]["universe"]),
+        ),
+        validation=ValidationConfig(
+            train_end=raw["validation"]["train_end"],
+        ),
+        pairs=PairsConfig(
+            price_field=raw["pairs"]["price_field"],
+            use_log_prices=bool(raw["pairs"]["use_log_prices"]),
+            min_overlap_bars=int(raw["pairs"]["min_overlap_bars"]),
+            adf_alpha=float(raw["pairs"]["adf_alpha"]),
+            half_life_min_bars=float(raw["pairs"]["half_life_min_bars"]),
+            half_life_max_bars=float(raw["pairs"]["half_life_max_bars"]),
+            kalman=KalmanConfig(
+                delta=float(raw["pairs"]["kalman"]["delta"]),
+                burn_in_bars=int(raw["pairs"]["kalman"]["burn_in_bars"]),
+            ),
         ),
         ingest=IngestConfig(
             request_timeout_s=float(raw["ingest"]["request_timeout_s"]),

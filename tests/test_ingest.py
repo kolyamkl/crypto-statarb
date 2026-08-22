@@ -48,11 +48,11 @@ RAW_KLINE = [
 
 
 def test_parse_kline_exact_decimals_and_utc():
-    open_time, o, h, l, c, vol, qvol, n = parse_kline(RAW_KLINE)
+    open_time, o, h, lo, c, vol, qvol, n = parse_kline(RAW_KLINE)
     assert open_time == T0
     # Decimal, not float: raw prices must round-trip losslessly into NUMERIC columns
     assert c == Decimal("42050.00") and isinstance(c, Decimal)
-    assert (o, h, l) == (Decimal("42000.10"), Decimal("42100.00"), Decimal("41900.50"))
+    assert (o, h, lo) == (Decimal("42000.10"), Decimal("42100.00"), Decimal("41900.50"))
     assert vol == Decimal("123.456") and qvol == Decimal("5190000.12") and n == 9876
 
 
