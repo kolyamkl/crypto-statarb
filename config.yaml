@@ -44,6 +44,22 @@ pairs:
     delta: 1.0e-5               # state-noise ratio (Chan's convention); tune on training data only
     burn_in_bars: 720           # OLS warm-up that initializes the filter; never tradeable bars
 
+signals:
+  # The M3 trading book, fixed at the M2 review (Kolya, 2026-08-22). AVAX/NEAR is
+  # the only clean screen pass; ADA/DOT and ADA/LTC passed the EG gate but have
+  # ~51d/~66d half-lives — including them is a DOCUMENTED post-hoc relaxation of
+  # the 30d half-life bound, chosen for book diversification (see DECISIONS.md).
+  # Leg order is the regression direction chosen by the M2 screen: y ~ x.
+  book:
+    - [AVAXUSDT, NEARUSDT]
+    - [ADAUSDT, DOTUSDT]
+    - [ADAUSDT, LTCUSDT]
+  zscore_window_bars: 1440      # 60d rolling standardization — middle ground for the
+                                # book's 28-66d half-lives; tunable in training only
+  entry_z: 2.0                  # spec defaults; treated as tunable, not sacred (M5)
+  exit_z: 0.0                   # exit when the spread is back at its rolling mean
+  stop_z: 3.0                   # stop-out: 3 sigma says the equilibrium may have broken
+
 ingest:
   request_timeout_s: 15
   max_retries: 5

@@ -56,6 +56,15 @@ class PairsConfig:
 
 
 @dataclass(frozen=True)
+class SignalsConfig:
+    book: list[tuple[str, str]]  # (leg_y, leg_x) in the M2 regression direction
+    zscore_window_bars: int
+    entry_z: float
+    exit_z: float
+    stop_z: float
+
+
+@dataclass(frozen=True)
 class DbConfig:
     host: str
     port: int
@@ -76,6 +85,7 @@ class Config:
     data: DataConfig
     validation: ValidationConfig
     pairs: PairsConfig
+    signals: SignalsConfig
     ingest: IngestConfig
     db: DbConfig
 
@@ -107,6 +117,13 @@ def load_config(path: Path | None = None) -> Config:
                 delta=float(raw["pairs"]["kalman"]["delta"]),
                 burn_in_bars=int(raw["pairs"]["kalman"]["burn_in_bars"]),
             ),
+        ),
+        signals=SignalsConfig(
+            book=[(str(y), str(x)) for y, x in raw["signals"]["book"]],
+            zscore_window_bars=int(raw["signals"]["zscore_window_bars"]),
+            entry_z=float(raw["signals"]["entry_z"]),
+            exit_z=float(raw["signals"]["exit_z"]),
+            stop_z=float(raw["signals"]["stop_z"]),
         ),
         ingest=IngestConfig(
             request_timeout_s=float(raw["ingest"]["request_timeout_s"]),

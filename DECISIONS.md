@@ -96,3 +96,40 @@ limitations section at M8. Newest entries at the bottom.
   documented, post-hoc relaxation of the half-life bound to ~70d. Re-screening
   on a shorter window was considered and rejected as data snooping; M5's
   walk-forward re-screens per window anyway.
+
+## 2026-08-22 — M2 review outcome: 3-pair book approved
+
+- Kolya approved the 3-pair book (AVAX/NEAR + ADA/DOT + ADA/LTC), i.e. option 1:
+  the half-life bound is relaxed to ~70d for the two near-misses, disclosed as a
+  post-hoc widening here and in config.yaml. Rationale: book diversification and
+  the near-misses' economic plausibility outweigh the purity of a 1-pair book.
+
+## 2026-08-22 — M3 signal construction
+
+- **Traded spread = Kalman INNOVATION** (today's y minus yesterday's-state
+  prediction from today's x), not the raw OLS spread. Using the state filtered
+  AT t would absorb today's observation and shrink the very dislocation we want
+  to trade; the lagged state is both causal and honest.
+- **Consequence discovered on real data:** the innovation reverts in HOURS
+  (avg hold 16–31h), not the 28–66 DAYS of the M2 raw-spread half-lives —
+  the filter's adaptive state absorbs the slow drift, so the strategy trades
+  fast dislocations around a moving equilibrium. This largely defuses the
+  slow-half-life concern for the two near-miss pairs, but it also means M2's
+  half-life gate and the traded dynamics are different objects — worth a
+  paragraph in the final report.
+- **Rolling z window 1440 bars (60d)**: middle ground for the book's 28–66d
+  raw half-lives; full-window min_periods so warm-up bars are NaN rather than
+  computed from short noisy samples. Tunable in training (M5).
+- **Entry/exit/stop = 2.0 / 0.0 / 3.0** — spec defaults, config-driven,
+  explicitly tunable-not-sacred (M5 owns tuning).
+- **Re-arm guard**: after any flat transition, no new entry until |z| returns
+  inside the entry band. Without it, a 3-sigma stop-out would re-enter the next
+  bar (|z| >= 2 still true), instantly re-buying the dislocation we refused to
+  hold. Same guard means a z that gaps STRAIGHT past the stop from flat is
+  never entered.
+- **Signal-at-close semantics**: position at bar t is the DESIRED position
+  decided at t's close; M4 executes on the next bar. The signal layer produces
+  no PnL — PnL only exists net of costs (SPEC guardrail).
+- **Fat tails on display**: z spikes to ±8 (Gaussian would never), and 34–40%
+  of entries end in stop-outs. Expected for crypto; M4 will price what those
+  stop-outs cost, and entry/stop levels are honest M5 tuning candidates.
