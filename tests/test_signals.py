@@ -123,6 +123,20 @@ def test_warmup_nan_stays_flat_and_disarmed():
     assert positions_from_z(z, 2.0, 0.0, 3.0).tolist() == [0, 0, 0, 0, -1]
 
 
+def test_cancel_entries_without_positive_beta():
+    from src.signals.rules import cancel_entries_without_positive_beta
+
+    desired = _z([0, -1, -1, 0, 1, 1, 1, 0, -1, -1]).astype(int)
+    beta = _z([1, -0.2, 1, 1, 1, -3, 1, 1, 0.5, 0.5])
+    out = cancel_entries_without_positive_beta(desired, beta)
+    # 1st episode: entry bar has beta=-0.2 -> whole episode cancelled
+    assert out.iloc[1:3].tolist() == [0, 0]
+    # 2nd episode: entry-bar beta is fine; a mid-trade dip must NOT cut it short
+    assert out.iloc[4:7].tolist() == [1, 1, 1]
+    # 3rd episode unaffected
+    assert out.iloc[8:10].tolist() == [-1, -1]
+
+
 def test_positions_are_only_valid_values():
     rng = np.random.default_rng(3)
     z = pd.Series(rng.normal(0, 2, 5000), index=_index(5000))

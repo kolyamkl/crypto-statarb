@@ -24,6 +24,31 @@ import numpy as np
 import pandas as pd
 
 
+def cancel_entries_without_positive_beta(desired: pd.Series, beta: pd.Series) -> pd.Series:
+    """Cancel whole trade episodes whose ENTRY-bar hedge ratio is not positive.
+
+    The 1:beta sizing only makes sense for beta > 0 — a non-positive estimate
+    means the filter thinks the 'pair' is long-long (or degenerate), and a live
+    desk would simply not put the trade on. Discovered the hard way in M5's
+    walk-forward: freshly screened pairs can have Kalman betas that dip negative
+    even when the training-window OLS beta was positive. Cancelling the whole
+    episode (not just masking bars) keeps the state machine's semantics intact.
+    """
+    out = desired.to_numpy().copy()
+    beta_values = beta.to_numpy()
+    cancelled = False
+    prev = 0
+    for i, s in enumerate(out):
+        if s != 0 and prev == 0:  # entry decided at this bar, using this bar's beta
+            cancelled = not beta_values[i] > 0
+        elif s == 0:
+            cancelled = False
+        prev = s
+        if cancelled:
+            out[i] = 0
+    return pd.Series(out, index=desired.index, name=desired.name)
+
+
 def positions_from_z(z: pd.Series, entry_z: float, exit_z: float, stop_z: float) -> pd.Series:
     """Explicit bar-by-bar loop, on purpose: a vectorised state machine is
     clever but unreviewable, and 35k iterations of this are instant."""

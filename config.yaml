@@ -33,6 +33,24 @@ validation:
   # PROPOSAL pending review: 4y train / ~1.5y test out of the 5.5y of history.
   train_end: "2024-12-31"
 
+  # M5 tuning grid — the ENTIRE search space, pre-declared for data-snooping
+  # discipline: 3*3*2*2*2 = 72 configs, nothing outside it was ever tried.
+  # Knobs follow the M4 diagnosis: delta is the "how much reversion does the
+  # filter leave in the spread" dial; the rest are the trading-rule levels.
+  grid:
+    kalman_delta: [1.0e-5, 1.0e-7, 1.0e-8]
+    entry_z: [1.5, 2.0, 2.5]
+    exit_z: [0.0, 0.5]
+    stop_z: [3.0, 4.0]
+    zscore_window_bars: [720, 1440]
+  min_trades_per_year: 15       # configs trading less than this (portfolio-wide, per
+                                # pair-year) are ignored: a 3-trade Sharpe is luck
+
+  walkforward:
+    train_bars: 17520           # rolling 2y window: re-screen pairs + re-tune grid here
+    test_bars: 2160             # then trade the next quarter untouched; step = test
+    max_pairs: 3                # book cap per fold, best EG p-values first
+
 pairs:
   price_field: close            # bar close of the perp
   use_log_prices: true          # hedge in log space -> beta is scale-free (a return ratio)

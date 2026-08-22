@@ -34,8 +34,27 @@ class IngestConfig:
 
 
 @dataclass(frozen=True)
+class GridConfig:
+    kalman_delta: list[float]
+    entry_z: list[float]
+    exit_z: list[float]
+    stop_z: list[float]
+    zscore_window_bars: list[int]
+
+
+@dataclass(frozen=True)
+class WalkforwardConfig:
+    train_bars: int
+    test_bars: int
+    max_pairs: int
+
+
+@dataclass(frozen=True)
 class ValidationConfig:
     train_end: str  # ISO date; last day visible to any selection/tuning step (M2-M4)
+    grid: GridConfig
+    min_trades_per_year: float
+    walkforward: WalkforwardConfig
 
 
 @dataclass(frozen=True)
@@ -112,6 +131,21 @@ def load_config(path: Path | None = None) -> Config:
         ),
         validation=ValidationConfig(
             train_end=raw["validation"]["train_end"],
+            grid=GridConfig(
+                kalman_delta=[float(v) for v in raw["validation"]["grid"]["kalman_delta"]],
+                entry_z=[float(v) for v in raw["validation"]["grid"]["entry_z"]],
+                exit_z=[float(v) for v in raw["validation"]["grid"]["exit_z"]],
+                stop_z=[float(v) for v in raw["validation"]["grid"]["stop_z"]],
+                zscore_window_bars=[
+                    int(v) for v in raw["validation"]["grid"]["zscore_window_bars"]
+                ],
+            ),
+            min_trades_per_year=float(raw["validation"]["min_trades_per_year"]),
+            walkforward=WalkforwardConfig(
+                train_bars=int(raw["validation"]["walkforward"]["train_bars"]),
+                test_bars=int(raw["validation"]["walkforward"]["test_bars"]),
+                max_pairs=int(raw["validation"]["walkforward"]["max_pairs"]),
+            ),
         ),
         pairs=PairsConfig(
             price_field=raw["pairs"]["price_field"],

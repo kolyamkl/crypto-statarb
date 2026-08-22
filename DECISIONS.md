@@ -168,3 +168,48 @@ limitations section at M8. Newest entries at the bottom.
 - M5 owns the (training-only) response: slower delta, or trade the
   frozen-hedge spread rather than the innovation, cost-aware entries, wider
   thresholds, coarser bars. Flagged to Kolya before any tuning happens.
+
+## 2026-08-22 — M5 validation design
+
+- **Pre-declared grid, disclosed in config**: 72 configs (3 deltas x 3 entries x
+  2 exits x 2 stops x 2 windows) — the ENTIRE search space, so the report can
+  state the parameter count honestly (spec: report the process, not the best
+  cell). Selection by portfolio net Sharpe on train, with a minimum-trades
+  floor (15/pair-year): a 3-trade Sharpe is luck, not evidence.
+- **One global config for the whole book**, not per-pair tuning — per-pair
+  parameters triple the effective search space and invite overfitting.
+- **Static split runs the frozen config CONTINUOUSLY through the boundary**
+  (a live desk crossing Jan 1 doesn't flatten); PnL is split at train_end.
+  Causality of the pipeline (unit-tested) makes computing signals once over the
+  full span equivalent to computing them per-window.
+- **Walk-forward validates the PIPELINE, not a pair list**: every fold
+  re-screens all 91 pairs (unchanged M2 rules, pre-registered [1d,30d]
+  half-life bounds — the M3 book's documented relaxation does NOT apply here)
+  and re-tunes the same grid on a rolling 2y window, then trades the next
+  quarter. Folds with no passing pairs or no eligible config hold cash —
+  recorded, not hidden. Test slices take fresh entries only and force-flatten
+  before the fold edge so entry AND exit costs land inside the slice.
+- **Dataset frozen at the M1 ingestion (ends 2026-07-11)** rather than
+  re-ingested to today: provenance doc stays exact, and 6 extra weeks of OOS
+  would not change any conclusion. Can be extended with one idempotent
+  ingestion re-run if wanted.
+- **Degenerate-hedge guard added mid-M5**: the first walk-forward run crashed
+  (by design — engine refuses beta <= 0 at entry) when a fold-screened pair's
+  Kalman beta went negative. Fix: cancel the whole trade episode at the signal
+  level (`cancel_entries_without_positive_beta`), as a live desk would refuse
+  a long-long "pair"; mid-trade beta dips do NOT cut healthy trades (tested).
+
+## 2026-08-22 — M5 results: the headline numbers
+
+- **Static split (curated book, tuned-then-frozen):** train Sharpe +0.59 /
+  net +30.8% (4y) -> test Sharpe +0.27 / net +4.0% (1.5y). Chosen config
+  delta=1e-7, window 720, entry 2.5, exit 0.5, stop 4.0 — every knob moved
+  exactly as the M4 whitening diagnosis predicted.
+- **Walk-forward (automated re-screen + re-tune, quarterly):** stitched OOS
+  net −30.2% over ~3.5y; 15 folds = 11 traded + 3 cash (screen found nothing
+  in 2025); avg fold train Sharpe ~1.0 vs consistently worse realized.
+- **Interpretation (reports/m5_validation_notes.md): the edge lives in pair
+  CURATION, not parameter tuning.** Same signals/engine/costs; the only
+  difference between +4% and −30% OOS was who picked the pairs. 2y screening
+  windows produce unstable books and statistical artifacts (worst fold:
+  short-DOGE spread through the Nov-2024 meme rally). Feeds M7/M8 directly.
