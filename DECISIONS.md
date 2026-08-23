@@ -213,3 +213,25 @@ limitations section at M8. Newest entries at the bottom.
   difference between +4% and −30% OOS was who picked the pairs. 2y screening
   windows produce unstable books and statistical artifacts (worst fold:
   short-DOGE spread through the Nov-2024 meme rally). Feeds M7/M8 directly.
+
+## 2026-08-22 — M6 metrics choices
+
+- **One reproducible command** (`python -m src.metrics.run`): re-derives the
+  frozen M5 config (grid re-search is seconds and deterministic) rather than
+  reading a hand-copied parameter set that could drift; reads the persisted
+  walk-forward series (regenerable via src.validate.run).
+- **Sortino uses target semideviation over ALL bars** (not losing bars only —
+  that variant inflates exactly when losses get rare). Caught by a unit test.
+- **Trade PnL includes the exit-cost bar** (the first flat bar carries the exit
+  fee); excluding it would flatter every round trip by one exit cost.
+- **Benchmarks on identical constant-capital arithmetic accounting**, no cost
+  model (one entry fee is noise at this horizon), exposure disclosed — the fair
+  comparison is Sharpe/Sortino, not raw net. Arithmetic accounting makes a
+  benchmark drawdown a sum (can exceed 100%), flagged in the report.
+- **Portfolio trade stats pooled from per-pair frames** (the portfolio
+  aggregate has no weights); portfolio exposure = any pair active (46% train /
+  51% test), turnover ~39x/yr of book capital.
+- **Best honest framing found here:** in the untouched test window the book
+  made +4.0% (Sharpe +0.27, maxDD −16.9%) while BTC/ETH buy-and-hold lost
+  23–25% (maxDD −69%/−102%) — market-neutrality did its job; the edge is thin
+  but real and uncorrelated with the market's direction.
