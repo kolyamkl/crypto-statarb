@@ -235,3 +235,25 @@ limitations section at M8. Newest entries at the bottom.
   made +4.0% (Sharpe +0.27, maxDD −16.9%) while BTC/ETH buy-and-hold lost
   23–25% (maxDD −69%/−102%) — market-neutrality did its job; the edge is thin
   but real and uncorrelated with the market's direction.
+
+## 2026-08-23 — M7 robustness results (all post-hoc diagnostics)
+
+- **Cost stress: the edge dies at 2x fees** (+4.0% -> −0.2%). The spec's own
+  stress question answered: no. Maker execution / lower turnover would be
+  existential, not an optimization.
+- **Grid tuning was ~luck**: Spearman rank corr between train and test Sharpe
+  across all 72 configs = +0.10; best test config had NEGATIVE train Sharpe.
+- **Leave-one-pair-out**: without ADA/LTC the test window nets −0.24% — the
+  whole OOS profit was one pair; the rolling-EG plot independently shows
+  ADA/LTC's only strong cointegration episode was exactly the profitable
+  window (Q1–mid 2025). Internally consistent, and damning for breadth.
+- **Regime slices**: +11.5% in trailing-BTC-up regimes vs −7.2% in BTC-down —
+  dollar-neutral is not factor-neutral; this materially weakens the M6
+  "uncorrelated with direction" framing and the M8 README must carry the
+  corrected claim.
+- **Rolling EG**: book pairs pass a rolling 1y screen in only 5–11% of
+  windows — crypto pairwise cointegration is episodic; full-window screens
+  detect an average property.
+- All fed into reports/m7_failure_analysis.md (the "what didn't work" section),
+  including next-step hypotheses: maker-first / cost-priced entries,
+  basket-vs-pairs, sector-factor regime gate.

@@ -78,6 +78,12 @@ signals:
   exit_z: 0.0                   # exit when the spread is back at its rolling mean
   stop_z: 3.0                   # stop-out: 3 sigma says the equilibrium may have broken
 
+robustness:
+  cost_multipliers: [0.5, 1.0, 2.0, 3.0]   # spec's "double the fees" plus margin both ways
+  regime_window_bars: 720                   # 30d trailing BTC return/vol for regime labels
+  rolling_eg_window_bars: 8760              # 1y rolling cointegration re-check per book pair
+  rolling_eg_step_bars: 720                 # stepped monthly
+
 backtest:
   taker_fee_bps: 5.0            # Binance USDT-M VIP0 taker (0.05%); doubled in M7 stress
   slippage_bps: 2.0             # per leg per fill — liquid majors, 1h bars; stressed in M7

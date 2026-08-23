@@ -90,6 +90,14 @@ class BacktestConfig:
 
 
 @dataclass(frozen=True)
+class RobustnessConfig:
+    cost_multipliers: list[float]
+    regime_window_bars: int
+    rolling_eg_window_bars: int
+    rolling_eg_step_bars: int
+
+
+@dataclass(frozen=True)
 class DbConfig:
     host: str
     port: int
@@ -112,6 +120,7 @@ class Config:
     pairs: PairsConfig
     signals: SignalsConfig
     backtest: BacktestConfig
+    robustness: RobustnessConfig
     ingest: IngestConfig
     db: DbConfig
 
@@ -169,6 +178,12 @@ def load_config(path: Path | None = None) -> Config:
         backtest=BacktestConfig(
             taker_fee_bps=float(raw["backtest"]["taker_fee_bps"]),
             slippage_bps=float(raw["backtest"]["slippage_bps"]),
+        ),
+        robustness=RobustnessConfig(
+            cost_multipliers=[float(v) for v in raw["robustness"]["cost_multipliers"]],
+            regime_window_bars=int(raw["robustness"]["regime_window_bars"]),
+            rolling_eg_window_bars=int(raw["robustness"]["rolling_eg_window_bars"]),
+            rolling_eg_step_bars=int(raw["robustness"]["rolling_eg_step_bars"]),
         ),
         ingest=IngestConfig(
             request_timeout_s=float(raw["ingest"]["request_timeout_s"]),
