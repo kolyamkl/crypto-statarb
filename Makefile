@@ -1,4 +1,4 @@
-.PHONY: db-up db-down deps test ingest all
+.PHONY: db-up db-down deps test ingest pairs signals backtest validate metrics report figures all
 
 db-up:
 	docker compose up -d db
@@ -15,6 +15,35 @@ test:
 ingest: db-up deps
 	uv run python -m src.ingest.run
 
-# Will grow milestone by milestone until it reproduces every figure and metric
-# in the README from raw data (SPEC.md §3 reproducibility requirement).
-all: ingest test
+pairs:
+	uv run python -m src.pairs.run
+
+signals:
+	uv run python -m src.signals.run
+
+backtest:
+	uv run python -m src.backtest.run
+
+validate:
+	uv run python -m src.validate.run
+
+metrics:
+	uv run python -m src.metrics.run
+
+report:
+	uv run python -m src.report.run
+
+# Promote the README figures from gitignored data/plots/ to the committed
+# reports/figures/ so the writeup renders on GitHub without the data.
+figures:
+	mkdir -p reports/figures
+	cp data/plots/m3/AVAXUSDT_NEARUSDT.png reports/figures/spread_AVAX_NEAR.png
+	cp data/plots/m5/static_split.png reports/figures/static_split.png
+	cp data/plots/m6/test_vs_benchmarks.png reports/figures/test_vs_benchmarks.png
+	cp data/plots/m6/walkforward.png reports/figures/walkforward.png
+	cp data/plots/m7/grid_train_vs_test.png reports/figures/grid_train_vs_test.png
+	cp data/plots/m7/rolling_eg.png reports/figures/rolling_eg.png
+
+# One command reproduces every table and figure in the README from raw data
+# (SPEC.md reproducibility requirement). Ingest ~40min, validate ~2h.
+all: ingest test pairs signals backtest validate metrics report figures
