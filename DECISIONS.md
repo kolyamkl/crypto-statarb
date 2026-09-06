@@ -320,3 +320,29 @@ equity data is pulled or screened.
   reports are never regenerated or overwritten by the equity study.
 - **min_overlap_bars 252** (1y of joint daily history) — the same calendar rule
   as crypto's 8760 hourly bars; not in the plan's table, declared here.
+
+## 2026-09-06 — M10 results (one evaluation pass, then diagnostics)
+
+- **Execution note:** the pre-declared book rule picked MA~V, MA~AVGO, MA~NVDA —
+  Mastercard in all three. Left as selected; the concentration is the cost of
+  removing the curation step, and is discussed in reports/m10_crossasset.md.
+- **One code deviation during the run, before any test-window read:** M3's
+  signal builder now routes through the SAME `cancel_entries_without_positive_beta`
+  guard M5 always used (MA~NVDA's ~0.17 OLS beta let the Kalman path dip negative
+  just after burn-in, which the engine correctly refuses to trade). No-op for the
+  crypto book; applied at the training stage only.
+- **H1 supported with an asterisk** (13/276 = 4.7% pass vs crypto's 1/91, but
+  ≈ the 13.8 luck-expected); **H2 refuted** (rolling 1y EG pass rates 0–4% vs
+  crypto's 5–11% — equity cointegration was MORE episodic); **H3 supported the
+  interesting way**: test window +13.7% net / Sharpe +1.02 flatters the screen,
+  but Spearman(train→test) = −0.30, 97% of grid configs positive OOS, MA~V (the
+  economic pair) lost −3.7% while the two luck-candidates printed, and SPY
+  buy-and-hold beat the book risk-adjusted (+1.11 vs +1.02).
+- **Walk-forward is the honest cross-asset comparator** (same automated pipeline
+  both markets): crypto −30.2% (−0.69) vs equities +3.3% (+0.12) over 3.5y —
+  the pipeline stops bleeding when frictions are thin, and still earns ~nothing.
+  v1's conclusion generalizes: it manufactures candidates, not edge.
+- **Cost structure is the one real structural difference:** equity edge survives
+  3× costs (+12.0%); crypto died at 2×. Equity constraint = signal; crypto = friction.
+- All numbers in reports/m10_crossasset.md; crypto column pinned to v1.0 and
+  never re-run; equity intermediate tables under reports/m10/.

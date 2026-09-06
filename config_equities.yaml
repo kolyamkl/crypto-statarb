@@ -70,10 +70,14 @@ pairs:
     burn_in_bars: 63            # ~3 calendar months (crypto: 720h)
 
 signals:
-  # Filled AFTER the M2-equivalent screen by the rule pre-declared in DECISIONS.md
-  # (2026-09-06): top 3 by worst-direction EG p among pairs passing BOTH gates;
-  # fewer pass -> smaller book; none -> cash. Mechanical, no curation this time.
-  book: []
+  # Filled by the rule pre-declared in DECISIONS.md (2026-09-06) BEFORE the screen
+  # ran: top 3 by worst-direction EG p among the 13 (of 276) pairs passing both
+  # gates. Mechanical, no curation: the rule concentrated the book on MA (all
+  # three pairs share it) — noted, not overridden, in reports/m10_crossasset.md.
+  book:
+    - [MA, V]                   # p=0.0045, HL 22d — same-sector duopoly, the economic poster child
+    - [MA, AVGO]                # p=0.0097, HL 22d — cross-cluster; plausible luck candidate
+    - [MA, NVDA]                # p=0.0142, HL 23d — cross-cluster; plausible luck candidate
   zscore_window_bars: 42        # ~2 months, mirroring crypto's 1440h default
   entry_z: 2.0                  # spec defaults, tunable in training only (same as crypto)
   exit_z: 0.0

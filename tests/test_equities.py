@@ -178,7 +178,9 @@ def test_equity_config_loads_and_is_frozen_as_declared(monkeypatch):
     assert cfg.backtest.borrow_rate_per_bar == pytest.approx(30.0 / 1e4 / 252)
     assert cfg.robustness.factor_symbol == "SPY" and cfg.benchmark_symbols == ["SPY"]
     assert cfg.reports_subdir == "m10"
-    assert cfg.signals.book == []  # filled only by the pre-declared post-screen rule
+    # Book filled by the pre-declared mechanical rule after the screen ran
+    # (top 3 by worse-direction EG p among full-gate passers; DECISIONS.md 2026-09-06).
+    assert cfg.signals.book == [("MA", "V"), ("MA", "AVGO"), ("MA", "NVDA")]
 
 
 def test_crypto_config_defaults_unchanged(monkeypatch):

@@ -1,10 +1,11 @@
 # crypto-statarb
 
-A statistical-arbitrage research study on crypto perpetual futures: pairs selected by
-**cointegration** (not correlation), a **time-varying hedge ratio** estimated with a
-Kalman filter, a **z-score spread strategy** backtested with real frictions (taker fees,
-slippage, actual funding payments), and validated **out-of-sample** two ways — a frozen
-train/test split and a fully-automated quarterly walk-forward.
+A cross-asset statistical-arbitrage research study — crypto perpetual futures, then a
+pre-registered replication on US equities: pairs selected by **cointegration** (not
+correlation), a **time-varying hedge ratio** estimated with a Kalman filter, a **z-score
+spread strategy** backtested with real frictions (taker fees, slippage, actual funding
+payments — or spread + short borrow for equities), and validated **out-of-sample** two
+ways — a frozen train/test split and a fully-automated quarterly walk-forward.
 
 **The headline is the in-sample / out-of-sample gap, reported honestly:**
 
@@ -148,7 +149,33 @@ table in this repo — is `reports/m7_failure_analysis.md`.
 
 Each would be a training-window experiment first, under the same rules as everything here.
 
-## 8. Reproduce
+## 8. The equity replication (M10) — same pipeline, second asset class
+
+The whole pipeline re-ran on **24 US large-caps (276 pairs, daily bars,
+2021–2026, same split)** under a pre-registered plan (`M10_PLAN.md`) with three
+hypotheses committed before any data was pulled — and the book selected by a
+**mechanical top-3 rule instead of human curation**, deliberately removing the
+step M7 credited with the crypto edge. Verdicts (`reports/m10_crossasset.md`):
+
+- **Prevalence (H1):** 13/276 pairs pass vs crypto's 1/91 — but ~13.8 passes
+  were expected by luck. Neither market beats its multiple-testing base rate.
+- **Stability (H2): refuted.** Rolling 1y cointegration pass rates were **0–4%**
+  vs crypto's 5–11% — equity cointegration was *more* episodic, not less.
+- **Profitability (H3):** the untouched test window looks great (+13.7% net,
+  Sharpe +1.02) and the diagnostics take it apart: the grid's train→test rank
+  correlation was **−0.30**, 97% of configs were positive OOS (a generous tape,
+  not a found edge), the one economically-sensible pair (MA~V) *lost* money
+  while the two luck-candidates printed — and **SPY buy-and-hold beat the book
+  risk-adjusted** (+1.11 vs +1.02).
+- The fairest cross-market comparator, the automated walk-forward: crypto
+  **−30.2%** → equities **+3.3%** (Sharpe +0.12) over 3.5 years. Thin equity
+  frictions stop the bleeding (the edge survives 3× costs, unlike crypto's
+  death at 2×) — and the pipeline still earns ~nothing. The v1 conclusion
+  generalizes: **it manufactures candidates, not edge, in both asset classes.**
+
+![Equity test window: strategy vs SPY buy-and-hold](reports/figures/m10_test_vs_benchmarks.png)
+
+## 9. Reproduce
 
 ```bash
 cp .env.example .env   # local Postgres credentials
@@ -159,8 +186,9 @@ Requires Docker (Postgres 16 on host port 5433) and [uv](https://docs.astral.sh/
 Ingestion pulls ~5.5 years of 1h data from Binance (~40 min at polite rate limits) and the
 validation stage runs the grid + walk-forward (~2 h). Individual stages: `make ingest`,
 `make pairs`, `make signals`, `make backtest`, `make validate`, `make metrics`, `make report`.
+The equity study reproduces with `make all-equities` (minutes — daily bars).
 
-## 9. Repo map
+## 10. Repo map
 
 | path | what it is |
 |---|---|
@@ -170,4 +198,6 @@ validation stage runs the grid + walk-forward (~2 h). Individual stages: `make i
 | `src/ingest/` → `src/report/` | one package per milestone: data, pairs, signals, backtest, validation, metrics, robustness |
 | `reports/` | committed per-milestone reports (auto-generated tables + hand-written notes) |
 | `reports/m7_failure_analysis.md` | **the honest section — start here** |
+| `M10_PLAN.md` → `reports/m10_crossasset.md` | pre-registered equity replication: plan, then verdicts |
+| `config_equities.yaml`, `reports/m10/` | the equity study's frozen parameters and generated tables |
 | `tests/` | 58 tests; look-ahead guards are bit-identical mutate-the-future tests |

@@ -23,7 +23,7 @@ from src.db import connect
 from src.metrics.core import bars_label
 from src.pairs.data import load_close_panel
 from src.paths import plot_dir, report_path
-from src.signals.rules import positions_from_z
+from src.signals.rules import cancel_entries_without_positive_beta, positions_from_z
 from src.signals.spread import signal_frame
 
 log = logging.getLogger(__name__)
@@ -39,6 +39,11 @@ def build_pair_signals(panel: pd.DataFrame, leg_y: str, leg_x: str, cfg: Config)
     frame["position"] = positions_from_z(
         frame["z"], cfg.signals.entry_z, cfg.signals.exit_z, cfg.signals.stop_z
     )
+    # Same guard the M5 layer applies (rules.py): a non-positive entry beta means
+    # a degenerate "pair" — never traded. A no-op for the crypto book (betas well
+    # above zero); equity pairs with small OLS betas (e.g. MA~NVDA ~0.17) can dip
+    # negative right after burn-in, which is where this first fired in M10.
+    frame["position"] = cancel_entries_without_positive_beta(frame["position"], frame["beta"])
     return frame
 
 

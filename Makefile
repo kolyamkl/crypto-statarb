@@ -1,4 +1,4 @@
-.PHONY: db-up db-down deps test ingest pairs signals backtest validate metrics report figures all \
+.PHONY: db-up db-down deps test ingest pairs signals backtest validate metrics report figures all figures-equities \
 	ingest-equities pairs-equities signals-equities backtest-equities validate-equities \
 	metrics-equities report-equities all-equities
 
@@ -76,7 +76,13 @@ metrics-equities:
 report-equities:
 	$(EQ) uv run python -m src.report.run
 
+figures-equities:
+	mkdir -p reports/figures
+	cp data/plots/m10/m5/static_split.png reports/figures/m10_static_split.png
+	cp data/plots/m10/m6/test_vs_benchmarks.png reports/figures/m10_test_vs_benchmarks.png
+	cp data/plots/m10/m7/rolling_eg.png reports/figures/m10_rolling_eg.png
+
 # One command reproduces the entire equity study (M10_PLAN.md DoD). Daily bars,
 # so the whole chain runs in minutes, not hours.
 all-equities: ingest-equities test pairs-equities signals-equities backtest-equities \
-	validate-equities metrics-equities report-equities
+	validate-equities metrics-equities report-equities figures-equities
