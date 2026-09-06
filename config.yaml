@@ -4,9 +4,11 @@
 data:
   # Primary market-data source. PROPOSAL pending review — see DECISIONS.md.
   exchange: binance_usdm        # USDT-margined perpetual futures
+  market: perp                  # ohlcv.market discriminator (M10 equities use 'equity')
   interval: "1h"                # bar size for OHLCV and premium-index series
   start_date: "2021-01-01"      # symbols listed later simply start at listing (recorded, not backfilled)
   end_date: null                # null = ingest up to the most recent complete bar
+  aux_symbols: []               # benchmark/factor-only symbols (crypto's factor BTC is in-universe)
 
   # Candidate universe (perp symbols). Chosen for economically plausible clusters,
   # NOT for known-good pairs — pair selection happens in M2 by cointegration.
@@ -83,12 +85,21 @@ robustness:
   regime_window_bars: 720                   # 30d trailing BTC return/vol for regime labels
   rolling_eg_window_bars: 8760              # 1y rolling cointegration re-check per book pair
   rolling_eg_step_bars: 720                 # stepped monthly
+  factor_symbol: BTCUSDT                    # sector factor for regime slices (M10: SPY)
 
 backtest:
   taker_fee_bps: 5.0            # Binance USDT-M VIP0 taker (0.05%); doubled in M7 stress
   slippage_bps: 2.0             # per leg per fill — liquid majors, 1h bars; stressed in M7
+  borrow_fee_bps_per_year: 0.0  # no borrow model for perps (funding is the holding cost)
+  fill_at_next_open: false      # 24/7 market: next open == prior close, priced via slippage
   # Sizing: unit gross capital per pair when active, split 1:beta across legs so
   # the pair is return-neutral; beta frozen at entry; portfolio = equal-weight pairs.
+
+metrics:
+  benchmarks: [BTCUSDT, ETHUSDT]  # buy-and-hold comparison rows in M6
+
+reports:
+  subdir: ""                    # v1 layout (reports/, data/plots/); M10 isolates under m10/
 
 ingest:
   request_timeout_s: 15

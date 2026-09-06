@@ -20,6 +20,7 @@ import psycopg
 from src.config import Config, load_config
 from src.db import connect
 from src.pairs.data import load_close_panel, train_cutoff
+from src.paths import plot_dir, report_path
 from src.backtest.engine import backtest_pair, portfolio_curve
 from src.backtest.funding import funding_rate_per_bar
 
@@ -27,8 +28,6 @@ log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
-REPORT_PATH = REPO_ROOT / "reports" / "m4_backtest.md"
-PLOT_DIR = REPO_ROOT / "data" / "plots" / "m4"
 
 
 def load_signals(
@@ -54,18 +53,18 @@ def store_results(
         cur.executemany(
             """
             INSERT INTO pair_backtest (exchange, interval, leg_y, leg_x, open_time,
-                                       w_y, w_x, gross, fee, slip, funding, net)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                       w_y, w_x, gross, fee, slip, funding, borrow, net)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (exchange, interval, leg_y, leg_x, open_time) DO UPDATE SET
                 w_y = EXCLUDED.w_y, w_x = EXCLUDED.w_x, gross = EXCLUDED.gross,
                 fee = EXCLUDED.fee, slip = EXCLUDED.slip,
-                funding = EXCLUDED.funding, net = EXCLUDED.net
+                funding = EXCLUDED.funding, borrow = EXCLUDED.borrow, net = EXCLUDED.net
             """,
             [
                 (
                     cfg.data.exchange, cfg.data.interval, leg_y, leg_x, t,
                     float(r.w_y), float(r.w_x), float(r.gross), float(r.fee),
-                    float(r.slip), float(r.funding), float(r.net),
+                    float(r.slip), float(r.funding), float(r.borrow), float(r.net),
                 )
                 for t, r in frame.iterrows()
             ],
@@ -74,20 +73,54 @@ def store_results(
 
 
 def totals(frame: pd.DataFrame) -> dict[str, float]:
-    out = {c: float(frame[c].sum()) for c in ["gross", "fee", "slip", "funding", "net"]}
+    out = {c: float(frame[c].sum()) for c in ["gross", "fee", "slip", "funding", "borrow", "net"]}
     # Defensive reconciliation on real data (the unit tests prove it on synthetic):
-    residual = out["net"] - (out["gross"] - out["fee"] - out["slip"] + out["funding"])
+    residual = out["net"] - (
+        out["gross"] - out["fee"] - out["slip"] + out["funding"] - out["borrow"]
+    )
     assert abs(residual) < 1e-9, f"PnL decomposition does not reconcile: {residual}"
     return out
 
 
 def write_report(cfg: Config, pair_totals: dict[str, dict], port: dict) -> Path:
+    # The borrow column only appears for the equity study, keeping the committed
+    # v1 crypto report byte-identical on re-runs.
+    show_borrow = cfg.backtest.borrow_fee_bps_per_year > 0
+
     def row(name: str, t: dict) -> str:
+        borrow_cell = f" {t['borrow'] * 100:.2f}% |" if show_borrow else ""
         return (
             f"| {name} | {t['gross'] * 100:+.2f}% | {t['fee'] * 100:.2f}% "
-            f"| {t['slip'] * 100:.2f}% | {t['funding'] * 100:+.2f}% | {t['net'] * 100:+.2f}% |"
+            f"| {t['slip'] * 100:.2f}% | {t['funding'] * 100:+.2f}% |{borrow_cell}"
+            f" {t['net'] * 100:+.2f}% |"
         )
 
+    if cfg.backtest.fill_at_next_open:
+        execution_note = (
+            "- **Execution:** decided at bar close, filled at the NEXT bar's open — the "
+            "overnight gap belongs to the position carried into it, never assumed away; "
+            "beta frozen at entry."
+        )
+        friction_note = (
+            f"- **Frictions:** fee {cfg.backtest.taker_fee_bps}bps + slippage "
+            f"{cfg.backtest.slippage_bps}bps per unit turnover; short-leg borrow at "
+            f"{cfg.backtest.borrow_fee_bps_per_year}bps/yr accrued per held bar."
+        )
+    else:
+        execution_note = (
+            "- **Execution:** decided at bar close, filled next bar open (= prior close in a "
+            "24/7 market, priced via slippage); beta frozen at entry."
+        )
+        friction_note = (
+            f"- **Frictions:** taker fee {cfg.backtest.taker_fee_bps}bps + slippage "
+            f"{cfg.backtest.slippage_bps}bps per unit turnover; funding from ACTUAL stored "
+            "events (never an assumed 8h grid)."
+        )
+
+    header = "| book unit | gross | fees | slippage | funding |" + (
+        " borrow | net |" if show_borrow else " net |"
+    )
+    divider = "|---|---|---|---|---|---|" + ("---|" if show_borrow else "")
     lines = [
         "# M4 backtest — training window, net of frictions",
         "",
@@ -96,28 +129,26 @@ def write_report(cfg: Config, pair_totals: dict[str, dict], port: dict) -> Path:
         f"- **Window:** training only, up to {cfg.validation.train_end}. "
         "All numbers are cumulative arithmetic PnL on unit capital (per pair, and per "
         "1.0 of book capital split equally across pairs for the portfolio).",
-        f"- **Frictions:** taker fee {cfg.backtest.taker_fee_bps}bps + slippage "
-        f"{cfg.backtest.slippage_bps}bps per unit turnover; funding from ACTUAL stored "
-        "events (never an assumed 8h grid).",
-        "- **Execution:** decided at bar close, filled next bar open (= prior close in a "
-        "24/7 market, priced via slippage); beta frozen at entry.",
+        friction_note,
+        execution_note,
         "- Sharpe/drawdown/etc. deliberately deferred to M6 (honest metrics).",
         "",
-        "| book unit | gross | fees | slippage | funding | net |",
-        "|---|---|---|---|---|---|",
+        header,
+        divider,
         *[row(name, t) for name, t in pair_totals.items()],
         row("**portfolio**", port),
     ]
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text("\n".join(lines) + "\n")
-    return REPORT_PATH
+    out = report_path(cfg, "m4_backtest.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines) + "\n")
+    return out
 
 
-def plot_pair(frame: pd.DataFrame, name: str, fname: str) -> Path:
+def plot_pair(frame: pd.DataFrame, name: str, fname: str, cfg: Config) -> Path:
     fig, ax = plt.subplots(figsize=(12, 5))
     ax.plot(frame.index, frame["gross"].cumsum() * 100, label="gross", lw=0.9)
     ax.plot(frame.index, frame["net"].cumsum() * 100, label="net (after fees+slip+funding)", lw=1.1)
-    ax.plot(frame.index, -(frame["fee"] + frame["slip"]).cumsum() * 100,
+    ax.plot(frame.index, -(frame["fee"] + frame["slip"] + frame["borrow"]).cumsum() * 100,
             label="cumulative trading costs", lw=0.8, ls="--")
     ax.plot(frame.index, frame["funding"].cumsum() * 100, label="cumulative funding", lw=0.8, ls=":")
     ax.axhline(0, color="grey", lw=0.6)
@@ -126,8 +157,9 @@ def plot_pair(frame: pd.DataFrame, name: str, fname: str) -> Path:
     ax.legend(loc="best", fontsize=8)
     fig.tight_layout()
 
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-    path = PLOT_DIR / fname
+    out_dir = plot_dir(cfg, "m4")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / fname
     fig.savefig(path, dpi=120)
     plt.close(fig)
     return path
@@ -141,6 +173,11 @@ def main() -> None:
         conn.execute(SCHEMA_PATH.read_text())
         conn.commit()
         panel = load_close_panel(conn, cfg)  # training window only by default
+        open_panel = (
+            load_close_panel(conn, cfg, field="open")
+            if cfg.backtest.fill_at_next_open
+            else None
+        )
 
         pair_results: dict[str, pd.DataFrame] = {}
         pair_totals: dict[str, dict] = {}
@@ -154,18 +191,20 @@ def main() -> None:
                 funding_y=funding_rate_per_bar(conn, cfg, leg_y, train_cutoff(cfg)),
                 funding_x=funding_rate_per_bar(conn, cfg, leg_x, train_cutoff(cfg)),
                 cfg=cfg.backtest,
+                open_y=open_panel[leg_y].reindex(sig.index) if open_panel is not None else None,
+                open_x=open_panel[leg_x].reindex(sig.index) if open_panel is not None else None,
             )
             store_results(conn, cfg, leg_y, leg_x, frame)
             name = f"{leg_y} ~ {leg_x}"
             pair_results[name] = frame
             pair_totals[name] = totals(frame)
             log.info("%s: %s", name, {k: f"{v * 100:+.2f}%" for k, v in pair_totals[name].items()})
-            log.info("plot: %s", plot_pair(frame, name, f"{leg_y}_{leg_x}.png"))
+            log.info("plot: %s", plot_pair(frame, name, f"{leg_y}_{leg_x}.png", cfg))
 
     port = portfolio_curve(pair_results)
     port_totals = totals(port)
     log.info("portfolio: %s", {k: f"{v * 100:+.2f}%" for k, v in port_totals.items()})
-    log.info("plot: %s", plot_pair(port, "portfolio (equal-weight pairs)", "portfolio.png"))
+    log.info("plot: %s", plot_pair(port, "portfolio (equal-weight pairs)", "portfolio.png", cfg))
     log.info("report written to %s", write_report(cfg, pair_totals, port_totals))
 
 

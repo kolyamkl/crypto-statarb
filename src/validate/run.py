@@ -32,24 +32,25 @@ from src.backtest.engine import portfolio_curve
 from src.backtest.funding import funding_rate_per_bar
 from src.metrics.core import ann_sharpe, summarize
 from src.pairs.data import load_close_panel, train_cutoff
+from src.paths import oos_csv_path, plot_dir, report_path
 from src.validate.grid import ParamSet, grid_search, run_params, spread_cache
 from src.validate.walkforward import Fold, run_walkforward
 
 log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-REPORT_PATH = REPO_ROOT / "reports" / "m5_validation.md"
-PLOT_DIR = REPO_ROOT / "data" / "plots" / "m5"
-# Per-bar walk-forward OOS series, persisted (gitignored) so M6+ can consume it
-# without re-running ~45 min of per-fold screening.
-OOS_CSV = REPO_ROOT / "data" / "m5_walkforward_oos.csv"
 
 # Explicit "give me everything" end for the two M5 evaluations — the deliberate,
 # documented crossing of train_end that the rest of the codebase must never do.
 FULL_HISTORY_END = datetime(2100, 1, 1, tzinfo=timezone.utc)
 
 
-def static_split(panel: pd.DataFrame, funding: dict[str, pd.Series], cfg: Config):
+def static_split(
+    panel: pd.DataFrame,
+    funding: dict[str, pd.Series],
+    cfg: Config,
+    open_panel: pd.DataFrame | None = None,
+):
     """Experiment A. Returns (best ParamSet, grid table, train stats, test stats,
     portfolio frame over the full span, per-pair result frames)."""
     cutoff = pd.Timestamp(train_cutoff(cfg))
@@ -60,6 +61,7 @@ def static_split(panel: pd.DataFrame, funding: dict[str, pd.Series], cfg: Config
     table = grid_search(
         panel, book, cfg.validation.grid, cache, funding, cfg.backtest,
         cfg.data.interval, cfg.validation.min_trades_per_year, end=cutoff,
+        open_panel=open_panel,
     )
     eligible = table[table["eligible"]]
     if eligible.empty:
@@ -74,7 +76,7 @@ def static_split(panel: pd.DataFrame, funding: dict[str, pd.Series], cfg: Config
     )
     # Frozen params, continuous run over the whole history (a live desk crossing
     # Jan 1 does not flatten its book), PnL split at the boundary.
-    results = run_params(panel, book, params, cache, funding, cfg.backtest)
+    results = run_params(panel, book, params, cache, funding, cfg.backtest, open_panel=open_panel)
     port = portfolio_curve(results)
     train_stats = summarize(port.loc[port.index < cutoff], cfg.data.interval)
     test_stats = summarize(port.loc[port.index >= cutoff], cfg.data.interval)
@@ -163,9 +165,10 @@ def write_report(
             f"| {p.entry_z}/{p.exit_z}/{p.stop_z} | {f.train_sharpe:+.2f} "
             f"| {f.test_net * 100:+.2f}% | {f.test_sharpe:+.2f} |"
         )
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text("\n".join(lines) + "\n")
-    return REPORT_PATH
+    out = report_path(cfg, "m5_validation.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines) + "\n")
+    return out
 
 
 def plot_static(port: pd.DataFrame, cfg: Config) -> Path:
@@ -179,22 +182,24 @@ def plot_static(port: pd.DataFrame, cfg: Config) -> Path:
     ax.set_title("static split: tuned config, frozen at the red line")
     ax.legend(loc="best", fontsize=8)
     fig.tight_layout()
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-    path = PLOT_DIR / "static_split.png"
+    out_dir = plot_dir(cfg, "m5")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "static_split.png"
     fig.savefig(path, dpi=120)
     plt.close(fig)
     return path
 
 
-def plot_walkforward(oos: pd.Series) -> Path:
+def plot_walkforward(oos: pd.Series, cfg: Config) -> Path:
     fig, ax = plt.subplots(figsize=(12, 5))
     ax.plot(oos.index, oos.cumsum() * 100, lw=1.1)
     ax.axhline(0, color="grey", lw=0.6)
     ax.set_ylabel("% of unit capital")
     ax.set_title("walk-forward: stitched out-of-sample equity (every bar untouched at tune time)")
     fig.tight_layout()
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-    path = PLOT_DIR / "walkforward.png"
+    out_dir = plot_dir(cfg, "m5")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "walkforward.png"
     fig.savefig(path, dpi=120)
     plt.close(fig)
     return path
@@ -206,23 +211,30 @@ def main() -> None:
 
     with connect(cfg.db) as conn:
         panel = load_close_panel(conn, cfg, end=FULL_HISTORY_END)
+        open_panel = (
+            load_close_panel(conn, cfg, end=FULL_HISTORY_END, field="open")
+            if cfg.backtest.fill_at_next_open
+            else None
+        )
         funding = {
             s: funding_rate_per_bar(conn, cfg, s, FULL_HISTORY_END) for s in cfg.data.universe
         }
     log.info("full panel: %d bars, %s -> %s", len(panel), panel.index.min(), panel.index.max())
 
-    params, table, train_stats, test_stats, port, _ = static_split(panel, funding, cfg)
+    params, table, train_stats, test_stats, port, _ = static_split(panel, funding, cfg, open_panel)
     log.info("static: chosen %s", params)
     log.info("static: train %s", {k: round(v, 4) for k, v in train_stats.items()})
     log.info("static: test  %s", {k: round(v, 4) for k, v in test_stats.items()})
     log.info("plot: %s", plot_static(port, cfg))
 
-    oos, folds = run_walkforward(panel, funding, cfg)
+    oos, folds = run_walkforward(panel, funding, cfg, open_panel)
     if len(oos):
-        oos.rename("net").to_csv(OOS_CSV)
+        oos_csv = oos_csv_path(cfg)
+        oos_csv.parent.mkdir(parents=True, exist_ok=True)
+        oos.rename("net").to_csv(oos_csv)
         log.info("walk-forward: net %+.2f%% over %d bars (series -> %s)",
-                 oos.sum() * 100, len(oos), OOS_CSV)
-        log.info("plot: %s", plot_walkforward(oos))
+                 oos.sum() * 100, len(oos), oos_csv)
+        log.info("plot: %s", plot_walkforward(oos, cfg))
 
     log.info("report written to %s", write_report(cfg, params, table, train_stats,
                                                   test_stats, oos, folds))

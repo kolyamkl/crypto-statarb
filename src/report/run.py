@@ -16,11 +16,12 @@ matplotlib.use("Agg")  # headless: this module only writes files, never opens wi
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from src.config import load_config
+from src.config import Config, load_config
 from src.db import connect
 from src.backtest.engine import portfolio_curve
 from src.backtest.funding import funding_rate_per_bar
 from src.pairs.data import load_close_panel, train_cutoff
+from src.paths import plot_dir, report_path
 from src.report.robustness import (
     cost_stress,
     grid_train_vs_test,
@@ -34,11 +35,9 @@ from src.validate.run import FULL_HISTORY_END, static_split
 log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-REPORT_PATH = REPO_ROOT / "reports" / "m7_robustness.md"
-PLOT_DIR = REPO_ROOT / "data" / "plots" / "m7"
 
 
-def plot_sensitivity(table: pd.DataFrame, chosen: dict, rank_corr: float) -> Path:
+def plot_sensitivity(table: pd.DataFrame, chosen: dict, rank_corr: float, cfg: Config) -> Path:
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(table["train_sharpe"], table["test_sharpe"], s=18, alpha=0.7)
     hit = table[
@@ -57,14 +56,15 @@ def plot_sensitivity(table: pd.DataFrame, chosen: dict, rank_corr: float) -> Pat
     ax.set_title(f"all 72 grid configs, train vs test (Spearman rank corr {rank_corr:+.2f})")
     ax.legend(loc="best", fontsize=8)
     fig.tight_layout()
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-    path = PLOT_DIR / "grid_train_vs_test.png"
+    out_dir = plot_dir(cfg, "m7")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "grid_train_vs_test.png"
     fig.savefig(path, dpi=120)
     plt.close(fig)
     return path
 
 
-def plot_rolling_eg(eg: pd.DataFrame) -> Path:
+def plot_rolling_eg(eg: pd.DataFrame, cfg: Config) -> Path:
     fig, ax = plt.subplots(figsize=(12, 5))
     for pair, group in eg.groupby("pair"):
         ax.plot(group["window_end"], group["eg_p_max"], label=pair, lw=1.0)
@@ -73,8 +73,9 @@ def plot_rolling_eg(eg: pd.DataFrame) -> Path:
     ax.set_title("did the cointegration persist? (lower = stronger)")
     ax.legend(loc="best", fontsize=8)
     fig.tight_layout()
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-    path = PLOT_DIR / "rolling_eg.png"
+    out_dir = plot_dir(cfg, "m7")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "rolling_eg.png"
     fig.savefig(path, dpi=120)
     plt.close(fig)
     return path
@@ -86,27 +87,36 @@ def main() -> None:
     rob = cfg.robustness
 
     with connect(cfg.db) as conn:
-        panel = load_close_panel(conn, cfg, end=FULL_HISTORY_END)
+        # Universe + aux so the regime factor column (e.g. SPY) exists in the panel.
+        panel = load_close_panel(
+            conn, cfg, end=FULL_HISTORY_END, symbols=cfg.data.universe + cfg.data.aux
+        )
+        open_panel = (
+            load_close_panel(conn, cfg, end=FULL_HISTORY_END, field="open")
+            if cfg.backtest.fill_at_next_open
+            else None
+        )
         funding = {
             s: funding_rate_per_bar(conn, cfg, s, FULL_HISTORY_END) for s in cfg.data.universe
         }
 
-    params, _, _, _, _, results = static_split(panel, funding, cfg)
+    params, _, _, _, _, results = static_split(panel, funding, cfg, open_panel)
     cutoff = pd.Timestamp(train_cutoff(cfg))
     book = list(cfg.signals.book)
     cache = spread_cache(
         panel, book, cfg.validation.grid.kalman_delta, cfg.pairs.kalman.burn_in_bars
     )
 
-    costs = cost_stress(panel, book, params, cache, funding, cfg, cutoff)
+    costs = cost_stress(panel, book, params, cache, funding, cfg, cutoff, open_panel)
     log.info("cost stress:\n%s", costs)
-    sens, rank_corr = grid_train_vs_test(panel, book, cache, funding, cfg, cutoff)
+    sens, rank_corr = grid_train_vs_test(panel, book, cache, funding, cfg, cutoff, open_panel)
     log.info("grid train-vs-test rank corr: %+.2f", rank_corr)
     loo = leave_one_pair_out(results, cutoff, cfg.data.interval)
     port_test_net = portfolio_curve(results)["net"]
+    factor_name = rob.factor_symbol.removesuffix("USDT")  # 'BTCUSDT' -> 'BTC'; 'SPY' -> 'SPY'
     regimes = regime_slices(
-        port_test_net.loc[port_test_net.index >= cutoff], panel["BTCUSDT"],
-        rob.regime_window_bars, cfg.data.interval,
+        port_test_net.loc[port_test_net.index >= cutoff], panel[rob.factor_symbol],
+        rob.regime_window_bars, cfg.data.interval, factor_name,
     )
     eg = rolling_eg(panel, book, rob.rolling_eg_window_bars, rob.rolling_eg_step_bars)
     eg_pass = eg.groupby("pair")["eg_p_max"].agg(["min", "median", lambda s: (s < 0.05).mean()])
@@ -137,7 +147,8 @@ def main() -> None:
         f"- Test-Sharpe range across the grid: {sens['test_sharpe'].min():+.2f} to "
         f"{sens['test_sharpe'].max():+.2f}; "
         f"{(sens['test_sharpe'] > 0).mean() * 100:.0f}% of configs were positive OOS.",
-        "- Scatter: `data/plots/m7/grid_train_vs_test.png` (chosen config starred).",
+        f"- Scatter: `{plot_dir(cfg, 'm7').relative_to(REPO_ROOT)}/grid_train_vs_test.png` "
+        "(chosen config starred).",
         "",
         "## Leave-one-pair-out (how much is one pair's doing?)",
         "",
@@ -148,7 +159,7 @@ def main() -> None:
             for r in loo.itertuples()
         ],
         "",
-        "## Market-regime slices (test window, trailing 30d BTC labels)",
+        f"## Market-regime slices (test window, trailing {factor_name} labels)",
         "",
         "| regime | bars | net | Sharpe |",
         "|---|---|---|---|",
@@ -167,13 +178,14 @@ def main() -> None:
             for pair, row in eg_pass.iterrows()
         ],
         "",
-        "- Time series: `data/plots/m7/rolling_eg.png`.",
+        f"- Time series: `{plot_dir(cfg, 'm7').relative_to(REPO_ROOT)}/rolling_eg.png`.",
     ]
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text("\n".join(lines) + "\n")
-    log.info("report written to %s", REPORT_PATH)
-    log.info("plot: %s", plot_sensitivity(sens, params.__dict__, rank_corr))
-    log.info("plot: %s", plot_rolling_eg(eg))
+    out = report_path(cfg, "m7_robustness.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines) + "\n")
+    log.info("report written to %s", out)
+    log.info("plot: %s", plot_sensitivity(sens, params.__dict__, rank_corr, cfg))
+    log.info("plot: %s", plot_rolling_eg(eg, cfg))
 
 
 if __name__ == "__main__":

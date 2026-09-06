@@ -276,3 +276,47 @@ limitations section at M8. Newest entries at the bottom.
   (~40 min ingest, ~2 h validate).
 - Repo map points readers at reports/m7_failure_analysis.md first — the
   negative results ARE the deliverable.
+
+## 2026-09-06 — M10 kickoff: equity replication (pre-registration freeze)
+
+Kolya's go-ahead received; M10_PLAN.md (commit 1ba73ad) is the binding design and
+the v1.0 tag prerequisite is already pushed. Everything below is fixed BEFORE any
+equity data is pulled or screened.
+
+- **Data source: yfinance** (daily OHLCV, `auto_adjust=True`) over Stooq. Reason:
+  next-open fills need dividend- AND split-adjusted opens consistent with the
+  adjusted closes; yfinance rescales the whole OHLC row, Stooq's adjustment policy
+  is undocumented. Caveat recorded: adjusted history is retroactively rescaled by
+  every later dividend, so re-ingestion legitimately REWRITES past bars — the
+  equity ohlcv upsert is ON CONFLICT DO UPDATE (unlike crypto's DO NOTHING), and
+  the retrieval date in data_provenance_equities.md is part of reproducibility.
+- **Book rule, pre-declared before the screen runs:** the static-split book is the
+  top 3 pairs by worst-direction EG p among pairs passing BOTH pre-registered
+  gates (p < 0.05 and half-life in [5, 60] trading days); fewer pass → smaller
+  book; none pass → the static split holds cash and that is the reported result.
+  This is deliberately MECHANICAL where the crypto book was curated (the post-hoc
+  half-life relaxation M7 identified as the likely source of edge). The equity
+  half-life bound is already loosened to 60d up front, so the relaxation crypto
+  made by hand is encoded in the gates here — the one intentional process
+  difference, to be flagged in the comparison report.
+- **Config isolation:** `config_equities.yaml`, selected via the `STATARB_CONFIG`
+  env var; frozen in this commit. Crypto's `config.yaml` gains only explicit
+  no-op fields naming what was previously hard-coded (market, benchmarks, factor
+  symbol, borrow=0, fill_at_next_open=false) — v1 numbers unchanged, guarded by
+  the existing test suite.
+- **Engine adaptations** (crypto path stays bit-identical, tested): (1) next-open
+  fills as a two-segment gross — the old position earns the overnight gap
+  close[t-1]→open[t], the new one earns open[t]→close[t]; with open==prior close
+  this collapses to the crypto close-to-close formula. (2) Borrow fee accrued per
+  held bar on short-leg notional at 30 bps/yr / 252; decomposition becomes
+  net = gross − fee − slip + funding − borrow, still exactly additive.
+- **Cost stress multiplies fee+slip only**; borrow is held constant, same
+  treatment as funding got in the v1 stress.
+- **SPY is an `aux_symbol`:** ingested for the benchmark row and the M7-style
+  regime factor, never a pair-screen candidate (universe stays the 24 declared
+  tickers → 276 pairs).
+- **Outputs isolated:** equity reports under `reports/m10/`, plots under
+  `data/plots/m10/`, provenance in `data_provenance_equities.md` — v1 crypto
+  reports are never regenerated or overwritten by the equity study.
+- **min_overlap_bars 252** (1y of joint daily history) — the same calendar rule
+  as crypto's 8760 hourly bars; not in the plan's table, declared here.

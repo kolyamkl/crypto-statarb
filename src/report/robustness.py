@@ -9,11 +9,13 @@ numbers are, and is disclosed as post-hoc analysis.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from src.config import BacktestConfig, Config
+from src.config import Config
 from src.backtest.engine import portfolio_curve
 from src.metrics.core import ann_sharpe
 from src.pairs.cointegration import engle_granger_p
@@ -28,16 +30,20 @@ def cost_stress(
     funding: dict[str, pd.Series],
     cfg: Config,
     cutoff: pd.Timestamp,
+    open_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Test-window net/Sharpe under scaled fee+slippage. Signals never see costs,
-    so trades are identical across rows and the damage is pure cost arithmetic."""
+    so trades are identical across rows and the damage is pure cost arithmetic.
+    Borrow (equities) is deliberately NOT multiplied — same treatment funding got
+    in the v1 stress (DECISIONS.md 2026-09-06)."""
     rows = []
     for m in cfg.robustness.cost_multipliers:
-        bt = BacktestConfig(
+        bt = replace(
+            cfg.backtest,
             taker_fee_bps=cfg.backtest.taker_fee_bps * m,
             slippage_bps=cfg.backtest.slippage_bps * m,
         )
-        results = run_params(panel, book, params, cache, funding, bt)
+        results = run_params(panel, book, params, cache, funding, bt, open_panel=open_panel)
         port = portfolio_curve(results)
         test = port.loc[port.index >= cutoff]
         rows.append(
@@ -57,13 +63,16 @@ def grid_train_vs_test(
     funding: dict[str, pd.Series],
     cfg: Config,
     cutoff: pd.Timestamp,
+    open_panel: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, float]:
     """Every grid config evaluated on BOTH windows. The Spearman rank correlation
     between train and test Sharpe measures how informative the tuning ranking
     was: near zero means the grid choice was closer to luck than skill."""
     rows = []
     for params in param_grid(cfg.validation.grid):
-        results = run_params(panel, book, params, cache, funding, cfg.backtest)
+        results = run_params(
+            panel, book, params, cache, funding, cfg.backtest, open_panel=open_panel
+        )
         port = portfolio_curve(results)
         train = port.loc[port.index < cutoff]
         test = port.loc[port.index >= cutoff]
@@ -81,18 +90,23 @@ def grid_train_vs_test(
 
 
 def regime_slices(
-    strategy_net: pd.Series, btc_close: pd.Series, window: int, interval: str
+    strategy_net: pd.Series,
+    factor_close: pd.Series,
+    window: int,
+    interval: str,
+    factor_name: str = "BTC",
 ) -> pd.DataFrame:
-    """Strategy PnL sliced by TRAILING BTC regime labels (causal by construction,
-    though used purely descriptively): direction = sign of the trailing 30d BTC
-    return; volatility = trailing 30d realized vol above/below its full-sample
-    median. A market-neutral book should not care about direction — this checks."""
-    btc = btc_close.reindex(strategy_net.index)
-    trailing_ret = btc.pct_change(window)
-    trailing_vol = btc.pct_change().rolling(window).std()
+    """Strategy PnL sliced by TRAILING sector-factor regime labels (causal by
+    construction, though used purely descriptively): direction = sign of the
+    trailing ~1-month factor return; volatility = trailing realized vol above/
+    below its full-sample median. The factor is BTC for crypto, SPY for equities.
+    A market-neutral book should not care about direction — this checks."""
+    factor = factor_close.reindex(strategy_net.index)
+    trailing_ret = factor.pct_change(window)
+    trailing_vol = factor.pct_change().rolling(window).std()
     labels = {
-        "BTC trending up": trailing_ret > 0,
-        "BTC trending down": trailing_ret <= 0,
+        f"{factor_name} trending up": trailing_ret > 0,
+        f"{factor_name} trending down": trailing_ret <= 0,
         "high vol": trailing_vol > trailing_vol.median(),
         "low vol": trailing_vol <= trailing_vol.median(),
     }

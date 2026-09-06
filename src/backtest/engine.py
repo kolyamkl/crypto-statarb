@@ -66,23 +66,46 @@ def backtest_pair(
     funding_y: pd.Series,
     funding_x: pd.Series,
     cfg: BacktestConfig,
+    open_y: pd.Series | None = None,
+    open_x: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Per-bar PnL decomposition on unit pair capital.
 
     funding_y/funding_x: signed funding RATE aggregated per bar (0 when no event
     in that bar). Positive rate means longs pay shorts, so pnl = -w * rate.
 
-    Columns: w_y, w_x, turnover, gross, fee, slip, funding, net.
+    open_y/open_x (equity variant, cfg.fill_at_next_open): fills happen at bar
+    t's OPEN, so gross splits into two segments — the position carried overnight
+    (held during bar t-1) earns close_{t-1} -> open_t, and the freshly-filled
+    position earns open_t -> close_t. With open_t == close_{t-1} (24/7 markets)
+    this collapses exactly to the close-to-close formula, so the crypto path is
+    unchanged by construction.
+
+    Columns: w_y, w_x, turnover, gross, fee, slip, funding, borrow, net.
     """
     frame = held_weights(desired, beta)
-    r_y = close_y.pct_change().fillna(0.0)
-    r_x = close_x.pct_change().fillna(0.0)
 
     frame["turnover"] = (
         frame["w_y"].diff().abs().fillna(frame["w_y"].abs())
         + frame["w_x"].diff().abs().fillna(frame["w_x"].abs())
     )
-    frame["gross"] = frame["w_y"] * r_y + frame["w_x"] * r_x
+    if cfg.fill_at_next_open:
+        if open_y is None or open_x is None:
+            raise ValueError("fill_at_next_open=True requires open_y and open_x series")
+        overnight_y = (open_y / close_y.shift(1) - 1).fillna(0.0)
+        overnight_x = (open_x / close_x.shift(1) - 1).fillna(0.0)
+        intraday_y = (close_y / open_y - 1).fillna(0.0)
+        intraday_x = (close_x / open_x - 1).fillna(0.0)
+        frame["gross"] = (
+            frame["w_y"].shift(1, fill_value=0.0) * overnight_y
+            + frame["w_x"].shift(1, fill_value=0.0) * overnight_x
+            + frame["w_y"] * intraday_y
+            + frame["w_x"] * intraday_x
+        )
+    else:
+        r_y = close_y.pct_change().fillna(0.0)
+        r_x = close_x.pct_change().fillna(0.0)
+        frame["gross"] = frame["w_y"] * r_y + frame["w_x"] * r_x
     frame["fee"] = frame["turnover"] * cfg.taker_fee_bps / 1e4
     frame["slip"] = frame["turnover"] * cfg.slippage_bps / 1e4
     # Funding is charged on the position held in the bar containing the event;
@@ -91,7 +114,13 @@ def backtest_pair(
         frame["w_y"] * funding_y.reindex(frame.index, fill_value=0.0)
         + frame["w_x"] * funding_x.reindex(frame.index, fill_value=0.0)
     )
-    frame["net"] = frame["gross"] - frame["fee"] - frame["slip"] + frame["funding"]
+    # Borrow fee accrues on the SHORT leg's notional for every held bar — always
+    # a cost, unlike funding which sometimes pays (M10_PLAN §5). Zero for crypto.
+    short_notional = (-frame[["w_y", "w_x"]]).clip(lower=0.0).sum(axis=1)
+    frame["borrow"] = short_notional * cfg.borrow_rate_per_bar
+    frame["net"] = (
+        frame["gross"] - frame["fee"] - frame["slip"] + frame["funding"] - frame["borrow"]
+    )
     return frame
 
 
@@ -102,7 +131,7 @@ def portfolio_curve(pair_results: dict[str, pd.DataFrame]) -> pd.DataFrame:
     that pair — idle capital, not missing data.
     """
     n = len(pair_results)
-    cols = ["gross", "fee", "slip", "funding", "net"]
+    cols = ["gross", "fee", "slip", "funding", "borrow", "net"]
     combined = sum(
         df[cols].reindex(_union_index(pair_results), fill_value=0.0) for df in pair_results.values()
     )

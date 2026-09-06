@@ -16,7 +16,7 @@ import psycopg
 from src.config import Config
 
 # pandas floor() frequency for each bar interval we support.
-FLOOR_FREQ = {"15m": "15min", "1h": "1h", "4h": "4h"}
+FLOOR_FREQ = {"15m": "15min", "1h": "1h", "4h": "4h", "1d": "1D"}
 
 
 def funding_rate_per_bar(

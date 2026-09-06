@@ -71,6 +71,7 @@ def run_params(
     start: pd.Timestamp | None = None,
     end: pd.Timestamp | None = None,
     fresh_entries_only: bool = False,
+    open_panel: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Backtest every book pair under one ParamSet, sliced to [start, end).
 
@@ -104,6 +105,8 @@ def run_params(
             funding_y=funding.get(leg_y, pd.Series(dtype=float)),
             funding_x=funding.get(leg_x, pd.Series(dtype=float)),
             cfg=bt_cfg,
+            open_y=open_panel[leg_y].reindex(frame.index) if open_panel is not None else None,
+            open_x=open_panel[leg_x].reindex(frame.index) if open_panel is not None else None,
         )
         if start is not None:
             result = result.loc[result.index >= start]
@@ -123,6 +126,7 @@ def grid_search(
     interval: str,
     min_trades_per_year: float,
     end: pd.Timestamp,
+    open_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Evaluate the whole grid on data strictly before `end` (the tuning window).
 
@@ -131,7 +135,9 @@ def grid_search(
     """
     rows = []
     for params in param_grid(grid):
-        results = run_params(panel, book, params, cache, funding, bt_cfg, end=end)
+        results = run_params(
+            panel, book, params, cache, funding, bt_cfg, end=end, open_panel=open_panel
+        )
         port = portfolio_curve(results)
         years = len(port) / BARS_PER_YEAR[interval]
         trades = sum(n_round_trips(r["w_y"]) for r in results.values())

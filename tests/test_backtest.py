@@ -140,8 +140,9 @@ def test_negative_beta_entry_refused():
 
 def test_portfolio_is_equal_capital_mean():
     idx = _index(5)
-    a = pd.DataFrame({c: [0.01] * 5 for c in ["gross", "fee", "slip", "funding", "net"]}, index=idx)
-    b = pd.DataFrame({c: [0.03] * 5 for c in ["gross", "fee", "slip", "funding", "net"]},
+    cols = ["gross", "fee", "slip", "funding", "borrow", "net"]
+    a = pd.DataFrame({c: [0.01] * 5 for c in cols}, index=idx)
+    b = pd.DataFrame({c: [0.03] * 5 for c in cols},
                      index=idx[2:].append(_index(7)[5:7]))  # partly disjoint index
     port = portfolio_curve({"a": a, "b": b})
     assert port.loc[idx[0], "net"] == pytest.approx(0.005)  # only pair a active

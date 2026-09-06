@@ -23,6 +23,12 @@ class DataConfig:
     start_date: str  # ISO date; symbols listed later simply start at listing
     end_date: str | None  # None = up to the most recent complete bar
     universe: list[str]
+    market: str = "perp"  # ohlcv.market discriminator: 'perp' (crypto) | 'equity'
+    aux_symbols: list[str] | None = None  # ingested for benchmarks/factors, never pair candidates
+
+    @property
+    def aux(self) -> list[str]:
+        return self.aux_symbols or []
 
 
 @dataclass(frozen=True)
@@ -87,6 +93,10 @@ class SignalsConfig:
 class BacktestConfig:
     taker_fee_bps: float
     slippage_bps: float
+    # Equity-study additions; the crypto defaults make the engine bit-identical to v1.
+    borrow_fee_bps_per_year: float = 0.0  # short-leg borrow (equities); 0 = no borrow model
+    borrow_rate_per_bar: float = 0.0  # derived: borrow_fee / 1e4 / bars-per-year
+    fill_at_next_open: bool = False  # True: fills at next bar's OPEN (equity overnight gaps)
 
 
 @dataclass(frozen=True)
@@ -95,6 +105,7 @@ class RobustnessConfig:
     regime_window_bars: int
     rolling_eg_window_bars: int
     rolling_eg_step_bars: int
+    factor_symbol: str = "BTCUSDT"  # sector factor for regime slices (SPY for equities)
 
 
 @dataclass(frozen=True)
@@ -123,10 +134,27 @@ class Config:
     robustness: RobustnessConfig
     ingest: IngestConfig
     db: DbConfig
+    benchmarks: list[str] | None = None  # buy-and-hold comparison symbols (M6)
+    reports_subdir: str = ""  # "" = v1 crypto layout; "m10" isolates the equity study
+
+    @property
+    def benchmark_symbols(self) -> list[str]:
+        # The v1 default is kept here (not in config.yaml) so the crypto config
+        # file's committed v1.0 shape stays authoritative for the tagged numbers.
+        return self.benchmarks if self.benchmarks is not None else ["BTCUSDT", "ETHUSDT"]
+
+
+# Bars per year by bar interval. 24/7 crypto uses calendar hours; equities use
+# the 252-day trading calendar (M10_PLAN §5) — this is what √-annualizes Sharpe.
+BARS_PER_YEAR = {"15m": 365 * 96, "1h": 365 * 24, "4h": 365 * 6, "1d": 252}
 
 
 def load_config(path: Path | None = None) -> Config:
     load_dotenv(REPO_ROOT / ".env")
+    if path is None and os.environ.get("STATARB_CONFIG"):
+        # Config-file switch for the equity study: the pipeline modules all call
+        # load_config() bare, so the selection must come from the environment.
+        path = REPO_ROOT / os.environ["STATARB_CONFIG"]
     with open(path or REPO_ROOT / "config.yaml") as f:
         raw = yaml.safe_load(f)
 
@@ -137,6 +165,8 @@ def load_config(path: Path | None = None) -> Config:
             start_date=raw["data"]["start_date"],
             end_date=raw["data"]["end_date"],
             universe=list(raw["data"]["universe"]),
+            market=str(raw["data"].get("market", "perp")),
+            aux_symbols=list(raw["data"].get("aux_symbols", [])),
         ),
         validation=ValidationConfig(
             train_end=raw["validation"]["train_end"],
@@ -178,12 +208,20 @@ def load_config(path: Path | None = None) -> Config:
         backtest=BacktestConfig(
             taker_fee_bps=float(raw["backtest"]["taker_fee_bps"]),
             slippage_bps=float(raw["backtest"]["slippage_bps"]),
+            borrow_fee_bps_per_year=float(raw["backtest"].get("borrow_fee_bps_per_year", 0.0)),
+            borrow_rate_per_bar=(
+                float(raw["backtest"].get("borrow_fee_bps_per_year", 0.0))
+                / 1e4
+                / BARS_PER_YEAR[raw["data"]["interval"]]
+            ),
+            fill_at_next_open=bool(raw["backtest"].get("fill_at_next_open", False)),
         ),
         robustness=RobustnessConfig(
             cost_multipliers=[float(v) for v in raw["robustness"]["cost_multipliers"]],
             regime_window_bars=int(raw["robustness"]["regime_window_bars"]),
             rolling_eg_window_bars=int(raw["robustness"]["rolling_eg_window_bars"]),
             rolling_eg_step_bars=int(raw["robustness"]["rolling_eg_step_bars"]),
+            factor_symbol=str(raw["robustness"].get("factor_symbol", "BTCUSDT")),
         ),
         ingest=IngestConfig(
             request_timeout_s=float(raw["ingest"]["request_timeout_s"]),
@@ -198,4 +236,8 @@ def load_config(path: Path | None = None) -> Config:
             password=os.environ.get("POSTGRES_PASSWORD", "statarb"),
             dbname=os.environ.get("POSTGRES_DB", "statarb"),
         ),
+        benchmarks=(
+            [str(s) for s in raw["metrics"]["benchmarks"]] if raw.get("metrics") else None
+        ),
+        reports_subdir=str(raw.get("reports", {}).get("subdir", "")),
     )

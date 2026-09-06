@@ -21,25 +21,34 @@ def train_cutoff(cfg: Config) -> datetime:
 
 
 def load_close_panel(
-    conn: psycopg.Connection, cfg: Config, end: datetime | None = None
+    conn: psycopg.Connection,
+    cfg: Config,
+    end: datetime | None = None,
+    symbols: list[str] | None = None,
+    field: str = "close",
 ) -> pd.DataFrame:
-    """Wide panel of perp close prices: index=open_time (UTC), one column per symbol.
+    """Wide price panel: index=open_time (UTC), one column per symbol.
 
     `end` is exclusive and defaults to the training cutoff — callers must ask
-    explicitly to see anything beyond the training window.
+    explicitly to see anything beyond the training window. `symbols` defaults to
+    the universe; benchmark/factor callers pass universe + aux explicitly so the
+    pair screen can never accidentally see an aux symbol. `field` selects the
+    price column ('open' for the equity next-open fill model).
     """
+    if field not in ("close", "open"):  # column name is interpolated — whitelist it
+        raise ValueError(f"unsupported price field {field!r}")
     end = end or train_cutoff(cfg)
     rows = conn.execute(
-        """
-        SELECT open_time, symbol, close FROM ohlcv
-        WHERE exchange = %s AND market = 'perp' AND interval = %s
+        f"""
+        SELECT open_time, symbol, {field} FROM ohlcv
+        WHERE exchange = %s AND market = %s AND interval = %s
           AND symbol = ANY(%s) AND open_time < %s
         ORDER BY open_time
         """,
-        (cfg.data.exchange, cfg.data.interval, cfg.data.universe, end),
+        (cfg.data.exchange, cfg.data.market, cfg.data.interval, symbols or cfg.data.universe, end),
     ).fetchall()
-    df = pd.DataFrame(rows, columns=["open_time", "symbol", "close"])
-    panel = df.pivot(index="open_time", columns="symbol", values="close").astype(float)
+    df = pd.DataFrame(rows, columns=["open_time", "symbol", field])
+    panel = df.pivot(index="open_time", columns="symbol", values=field).astype(float)
     # No forward-filling here, ever: a NaN is a recorded absence (see gap policy);
     # pair-level code decides how to align, typically an inner join via dropna().
     return panel

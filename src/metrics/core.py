@@ -11,7 +11,18 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-BARS_PER_YEAR = {"15m": 365 * 96, "1h": 365 * 24, "4h": 365 * 6}
+from src.config import BARS_PER_YEAR  # single source of truth; re-exported for callers
+
+__all__ = ["BARS_PER_YEAR"]
+
+
+def bars_label(bars: float, interval: str) -> str:
+    """Human-readable duration for a bar count — '123h (~5.1d)' or '12d'."""
+    if interval == "1h":
+        return f"{bars:.0f}h (~{bars / 24:.1f}d)"
+    if interval == "1d":
+        return f"{bars:.0f}d"
+    return f"{bars:.0f} bars"
 
 
 def ann_sharpe(pnl: pd.Series, interval: str) -> float:
@@ -97,10 +108,13 @@ def summarize(frame: pd.DataFrame, interval: str) -> dict[str, float]:
 
     Portfolio frames have no weights; trade stats are reported when available.
     """
+    costs = frame["fee"] + frame["slip"]
+    if "borrow" in frame.columns:  # equity variant: borrow is a cost like fee/slip
+        costs = costs + frame["borrow"]
     out = {
         "net": float(frame["net"].sum()),
         "gross": float(frame["gross"].sum()),
-        "costs": float((frame["fee"] + frame["slip"]).sum()),
+        "costs": float(costs.sum()),
         "funding": float(frame["funding"].sum()),
         "sharpe": ann_sharpe(frame["net"], interval),
         "max_dd": max_drawdown(frame["net"]),

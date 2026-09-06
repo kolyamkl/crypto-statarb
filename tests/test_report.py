@@ -52,7 +52,8 @@ def test_regime_slices_partition_direction_and_vol():
 def test_leave_one_pair_out_drops_exactly_one():
     idx = _index(10)
     frame = pd.DataFrame(
-        {"net": 0.01, "gross": 0.01, "fee": 0.0, "slip": 0.0, "funding": 0.0}, index=idx
+        {"net": 0.01, "gross": 0.01, "fee": 0.0, "slip": 0.0, "funding": 0.0, "borrow": 0.0},
+        index=idx,
     )
     results = {"a": frame, "b": frame * 3}
     out = leave_one_pair_out(results, idx[0], "1h").set_index("without")

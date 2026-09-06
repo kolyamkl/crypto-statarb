@@ -1,4 +1,9 @@
-.PHONY: db-up db-down deps test ingest pairs signals backtest validate metrics report figures all
+.PHONY: db-up db-down deps test ingest pairs signals backtest validate metrics report figures all \
+	ingest-equities pairs-equities signals-equities backtest-equities validate-equities \
+	metrics-equities report-equities all-equities
+
+# M10 equity study: same pipeline, config-switched (M10_PLAN.md).
+EQ = STATARB_CONFIG=config_equities.yaml
 
 db-up:
 	docker compose up -d db
@@ -47,3 +52,31 @@ figures:
 # One command reproduces every table and figure in the README from raw data
 # (SPEC.md reproducibility requirement). Ingest ~40min, validate ~2h.
 all: ingest test pairs signals backtest validate metrics report figures
+
+# ---- M10 equity study (outputs isolated under reports/m10/, data/plots/m10/) ----
+
+ingest-equities: db-up deps
+	$(EQ) uv run python -m src.ingest.equities
+
+pairs-equities:
+	$(EQ) uv run python -m src.pairs.run
+
+signals-equities:
+	$(EQ) uv run python -m src.signals.run
+
+backtest-equities:
+	$(EQ) uv run python -m src.backtest.run
+
+validate-equities:
+	$(EQ) uv run python -m src.validate.run
+
+metrics-equities:
+	$(EQ) uv run python -m src.metrics.run
+
+report-equities:
+	$(EQ) uv run python -m src.report.run
+
+# One command reproduces the entire equity study (M10_PLAN.md DoD). Daily bars,
+# so the whole chain runs in minutes, not hours.
+all-equities: ingest-equities test pairs-equities signals-equities backtest-equities \
+	validate-equities metrics-equities report-equities

@@ -55,7 +55,10 @@ def make_folds(index: pd.DatetimeIndex, train_bars: int, test_bars: int) -> list
 
 
 def run_walkforward(
-    panel: pd.DataFrame, funding: dict[str, pd.Series], cfg: Config
+    panel: pd.DataFrame,
+    funding: dict[str, pd.Series],
+    cfg: Config,
+    open_panel: pd.DataFrame | None = None,
 ) -> tuple[pd.Series, list[Fold]]:
     """Returns the stitched out-of-sample portfolio net PnL series and fold log."""
     wf = cfg.validation.walkforward
@@ -81,6 +84,7 @@ def run_walkforward(
         table = grid_search(
             span, fold.book, cfg.validation.grid, cache, funding, cfg.backtest,
             cfg.data.interval, cfg.validation.min_trades_per_year, end=fold.test_start,
+            open_panel=open_panel,
         )
         eligible = table[table["eligible"]]
         if eligible.empty:
@@ -100,6 +104,7 @@ def run_walkforward(
         results = run_params(
             span, fold.book, fold.params, cache, funding, cfg.backtest,
             start=fold.test_start, end=fold.test_end, fresh_entries_only=True,
+            open_panel=open_panel,
         )
         port = portfolio_curve(results)
         fold.test_net = float(port["net"].sum())

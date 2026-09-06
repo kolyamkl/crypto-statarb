@@ -1,0 +1,105 @@
+# M10 equity replication — single source of truth for the equity study.
+# Frozen BEFORE any equity data was pulled (DECISIONS.md 2026-09-06); every value
+# either copies config.yaml verbatim or applies a rescaling pre-declared in
+# M10_PLAN.md Section 5. Selected via STATARB_CONFIG=config_equities.yaml.
+
+data:
+  exchange: yfinance            # DB key for this source (ohlcv.exchange)
+  market: equity                # ohlcv.market discriminator ('perp' for crypto)
+  interval: "1d"                # free intraday equity data isn't usable; flagged confound (M10_PLAN §7)
+  start_date: "2021-01-01"      # matched to the crypto window so the macro period is held constant
+  end_date: "2026-07-11"        # matched to the crypto ingestion end
+
+  # Pre-declared universe (M10_PLAN §4): economic clusters chosen for plausible
+  # cointegration MECHANISMS, not known-good pairs — same rule as crypto M1.
+  # 24 tickers -> C(24,2) = 276 candidate pairs (~13.8 expected false positives at 5%).
+  universe:
+    - JPM                       # banks
+    - BAC
+    - C
+    - WFC
+    - GS
+    - MS
+    - XOM                       # integrated oil
+    - CVX
+    - COP
+    - NVDA                      # semiconductors
+    - AMD
+    - INTC
+    - TXN
+    - AVGO
+    - V                         # payments
+    - MA
+    - AXP
+    - WMT                       # big-box retail
+    - TGT
+    - COST
+    - KO                        # beverages
+    - PEP
+    - VZ                        # telecom
+    - T
+  # Ingested for benchmarking and the regime factor only — never screened as a pair leg.
+  aux_symbols:
+    - SPY
+
+validation:
+  train_end: "2024-12-31"       # same split as crypto; test window untouched until the one evaluation pass
+  grid:
+    # Same 72-config search space; only the z windows are rescaled to trading days
+    # (M10_PLAN §5: "everything not listed stays byte-identical").
+    kalman_delta: [1.0e-5, 1.0e-7, 1.0e-8]
+    entry_z: [1.5, 2.0, 2.5]
+    exit_z: [0.0, 0.5]
+    stop_z: [3.0, 4.0]
+    zscore_window_bars: [21, 42]  # ~1 / ~2 months of trading days (crypto: 720h/1440h)
+  min_trades_per_year: 10       # declared in M10_PLAN §5: fewer bars => fewer signals
+  walkforward:
+    train_bars: 504             # 2y of trading days (crypto: 17520h)
+    test_bars: 63               # 1 quarter (crypto: 2160h)
+    max_pairs: 3                # same book cap
+
+pairs:
+  price_field: close
+  use_log_prices: true
+  min_overlap_bars: 252         # >=1y of joint daily history — same calendar rule as crypto's 8760
+  adf_alpha: 0.05
+  half_life_min_bars: 5         # <1 trading week: daily bars can't resolve the reversion
+  half_life_max_bars: 60        # loosened vs crypto's 30d: slower equity reversion, no funding drag
+  kalman:
+    delta: 1.0e-5               # same default; the grid tunes it on train only
+    burn_in_bars: 63            # ~3 calendar months (crypto: 720h)
+
+signals:
+  # Filled AFTER the M2-equivalent screen by the rule pre-declared in DECISIONS.md
+  # (2026-09-06): top 3 by worst-direction EG p among pairs passing BOTH gates;
+  # fewer pass -> smaller book; none -> cash. Mechanical, no curation this time.
+  book: []
+  zscore_window_bars: 42        # ~2 months, mirroring crypto's 1440h default
+  entry_z: 2.0                  # spec defaults, tunable in training only (same as crypto)
+  exit_z: 0.0
+  stop_z: 3.0
+
+robustness:
+  cost_multipliers: [0.5, 1.0, 2.0, 3.0]   # multiplies fee+slip only; borrow held constant (DECISIONS.md)
+  regime_window_bars: 21                    # trailing ~1 month (crypto: 720h = 30d)
+  rolling_eg_window_bars: 252               # rolling 1y cointegration re-check
+  rolling_eg_step_bars: 21                  # stepped monthly
+  factor_symbol: SPY                        # sector factor for regime slices (crypto: BTCUSDT)
+
+backtest:
+  taker_fee_bps: 0.0            # retail zero-commission era (M10_PLAN §5)
+  slippage_bps: 2.0             # half-spread proxy per leg per side, liquid large-caps
+  borrow_fee_bps_per_year: 30.0 # general-collateral short borrow, accrued per held bar
+  fill_at_next_open: true       # overnight gap risk is real in equities — never assumed away
+
+metrics:
+  benchmarks: [SPY]             # buy-and-hold comparison rows (crypto: BTC/ETH)
+
+reports:
+  subdir: m10                   # reports/m10/, data/plots/m10/ — v1 outputs never overwritten
+
+ingest:
+  request_timeout_s: 15
+  max_retries: 5
+  retry_backoff_s: 2.0
+  min_request_interval_s: 0.35  # unused by yfinance batch download; kept for config shape

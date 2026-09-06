@@ -20,7 +20,9 @@ import psycopg
 
 from src.config import Config, load_config
 from src.db import connect
+from src.metrics.core import bars_label
 from src.pairs.data import load_close_panel
+from src.paths import plot_dir, report_path
 from src.signals.rules import positions_from_z
 from src.signals.spread import signal_frame
 
@@ -28,8 +30,6 @@ log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
-REPORT_PATH = REPO_ROOT / "reports" / "m3_signals.md"
-PLOT_DIR = REPO_ROOT / "data" / "plots" / "m3"
 
 
 def build_pair_signals(panel: pd.DataFrame, leg_y: str, leg_x: str, cfg: Config) -> pd.DataFrame:
@@ -111,12 +111,13 @@ def write_report(cfg: Config, summaries: dict[str, dict]) -> Path:
         lines.append(
             f"| {name} | {s['tradeable_bars']} | {s['entries']} | {s['mean_exits']} "
             f"| {s['stop_outs']} | {s['open_at_end']} "
-            f"| {s['avg_hold_bars']:.0f}h (~{s['avg_hold_bars'] / 24:.1f}d) "
+            f"| {bars_label(s['avg_hold_bars'], cfg.data.interval)} "
             f"| {s['pct_in_market']:.1f}% |"
         )
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text("\n".join(lines) + "\n")
-    return REPORT_PATH
+    out = report_path(cfg, "m3_signals.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines) + "\n")
+    return out
 
 
 def plot_signals(frame: pd.DataFrame, leg_y: str, leg_x: str, cfg: Config) -> Path:
@@ -132,8 +133,9 @@ def plot_signals(frame: pd.DataFrame, leg_y: str, leg_x: str, cfg: Config) -> Pa
     ax2.set_title("spread position (+1 long / -1 short)")
     fig.tight_layout()
 
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-    path = PLOT_DIR / f"{leg_y}_{leg_x}.png"
+    out_dir = plot_dir(cfg, "m3")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{leg_y}_{leg_x}.png"
     fig.savefig(path, dpi=120)
     plt.close(fig)
     return path

@@ -21,16 +21,16 @@ import psycopg
 
 from src.config import Config, load_config
 from src.db import connect
+from src.metrics.core import bars_label
 from src.pairs.cointegration import PairScreenResult, ols_hedge, screen_universe
 from src.pairs.data import load_close_panel
 from src.pairs.kalman import kalman_hedge
+from src.paths import plot_dir, report_path
 
 log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
-REPORT_PATH = REPO_ROOT / "reports" / "m2_pair_screen.md"
-PLOT_DIR = REPO_ROOT / "data" / "plots" / "m2"
 
 
 def store_results(
@@ -86,15 +86,16 @@ def write_report(cfg: Config, results: list[PairScreenResult]) -> Path:
         "|---|--------------|------|------|------------------|-----------|----------|--------|",
     ]
     for i, r in enumerate(results, 1):
-        hl = f"{r.half_life_bars:.0f}h (~{r.half_life_bars / 24:.1f}d)" if r.half_life_bars else "none"
+        hl = bars_label(r.half_life_bars, cfg.data.interval) if r.half_life_bars else "none"
         lines.append(
             f"| {i} | {r.leg_y} ~ {r.leg_x} | {r.n_bars} | {r.beta:.3f} "
             f"| {r.eg_p_max:.4f} | {hl} | {r.ret_corr:.2f} "
             f"| {'**yes**' if r.passed else 'no'} |"
         )
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text("\n".join(lines) + "\n")
-    return REPORT_PATH
+    out = report_path(cfg, "m2_pair_screen.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines) + "\n")
+    return out
 
 
 def plot_pair(panel: pd.DataFrame, r: PairScreenResult, cfg: Config) -> Path:
@@ -104,8 +105,8 @@ def plot_pair(panel: pd.DataFrame, r: PairScreenResult, cfg: Config) -> Path:
     _, _, spread = ols_hedge(y, x)
     kalman = kalman_hedge(y, x, cfg.pairs.kalman)
 
-    # 30d rolling OLS beta as a model-free sanity reference for the Kalman path.
-    window = 720
+    # ~1-month rolling OLS beta as a model-free sanity reference for the Kalman path.
+    window = 720 if cfg.data.interval == "1h" else 21
     rolling_beta = (
         y.rolling(window).cov(x) / x.rolling(window).var()
     )
@@ -116,17 +117,18 @@ def plot_pair(panel: pd.DataFrame, r: PairScreenResult, cfg: Config) -> Path:
         ax1.axhline(spread.mean() + k * spread.std(), color="grey", ls="--", lw=0.8)
     ax1.set_title(
         f"{r.leg_y} ~ {r.leg_x}: OLS log-spread (train), "
-        f"EG p={r.eg_p_max:.4f}, half-life~{r.half_life_bars / 24:.1f}d"
+        f"EG p={r.eg_p_max:.4f}, half-life ~{bars_label(r.half_life_bars, cfg.data.interval)}"
     )
     ax2.plot(kalman.index, kalman["beta"], label="Kalman beta (filtered)", lw=1.0)
-    ax2.plot(rolling_beta.index, rolling_beta, label="30d rolling OLS beta", lw=0.8, alpha=0.7)
+    ax2.plot(rolling_beta.index, rolling_beta, label="~30d rolling OLS beta", lw=0.8, alpha=0.7)
     ax2.axhline(r.beta, color="grey", ls="--", lw=0.8, label="full-train OLS beta")
     ax2.set_title("time-varying hedge ratio")
     ax2.legend(loc="best", fontsize=8)
     fig.tight_layout()
 
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-    path = PLOT_DIR / f"{r.leg_y}_{r.leg_x}.png"
+    out_dir = plot_dir(cfg, "m2")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{r.leg_y}_{r.leg_x}.png"
     fig.savefig(path, dpi=120)
     plt.close(fig)
     return path
