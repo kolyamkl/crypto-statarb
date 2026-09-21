@@ -42,6 +42,8 @@ report:
 # reports/figures/ so the writeup renders on GitHub without the data.
 figures:
 	mkdir -p reports/figures
+	cp data/plots/m2/AVAXUSDT_NEARUSDT.png reports/figures/pair_diagnostics_AVAX_NEAR.png
+	cp data/plots/m4/portfolio.png reports/figures/costs_decomposition.png
 	cp data/plots/m3/AVAXUSDT_NEARUSDT.png reports/figures/spread_AVAX_NEAR.png
 	cp data/plots/m5/static_split.png reports/figures/static_split.png
 	cp data/plots/m6/test_vs_benchmarks.png reports/figures/test_vs_benchmarks.png

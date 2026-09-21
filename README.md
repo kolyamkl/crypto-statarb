@@ -1,203 +1,278 @@
 # crypto-statarb
 
-A cross-asset statistical-arbitrage research study — crypto perpetual futures, then a
-pre-registered replication on US equities: pairs selected by **cointegration** (not
-correlation), a **time-varying hedge ratio** estimated with a Kalman filter, a **z-score
-spread strategy** backtested with real frictions (taker fees, slippage, actual funding
-payments — or spread + short borrow for equities), and validated **out-of-sample** two
-ways — a frozen train/test split and a fully-automated quarterly walk-forward.
+**A from-scratch test of the most famous "market-neutral" trading strategy — pairs
+trading — on crypto, and then on US stocks. Spoiler: honest testing kills most of it,
+and that's the point.**
 
-**The headline is the in-sample / out-of-sample gap, reported honestly:**
+This README assumes you've never heard of pairs trading. Every term in *italics* is
+explained the first time it appears, and there's a [jargon table](#jargon-translator)
+at the bottom.
 
-| | net PnL | Sharpe | max DD |
+---
+
+## The idea in plain English
+
+Imagine two coins that usually move together — like a dog on a leash. Each one
+wanders randomly, but the *distance between them* keeps snapping back.
+
+Pairs trading bets on the leash, not the dog:
+
+1. Find two assets whose price gap historically snaps back to normal.
+2. When the gap gets unusually wide, **short the expensive one, buy the cheap one**.
+3. When the gap closes, exit. You never bet on the market going up or down — only
+   on the gap closing. That's what *market-neutral* means.
+
+Sounds easy. The catch: it's also the easiest strategy in the world to fool yourself
+with. Random pairs *look* connected if you stare at enough of them, backtests
+quietly cheat by peeking at the future, and trading fees eat edges this small.
+
+## So what is this repo actually?
+
+**A research project about not fooling yourself.** The question isn't "can I make a
+profitable backtest?" (anyone can — that's the trap). It's:
+
+> Does a textbook pairs-trading strategy on crypto still work after you pay real
+> costs, ban every form of peeking at the future, and judge it only on data it has
+> never seen?
+
+The headline answer, reported honestly:
+
+| Experiment | Net profit | Sharpe* | Worst drop |
 |---|---|---|---|
-| Train, 2021–2024 (parameters tuned here) | +30.8% | +0.59 | −18.7% |
-| **Test, 2025 – mid-2026 (untouched until the end)** | **+4.0%** | **+0.27** | −16.9% |
-| Walk-forward, re-screened + re-tuned quarterly, 2023 – mid-2026 | **−30.2%** | −0.69 | −47.1% |
-| BTC buy-and-hold over the same test window | −22.9% | −0.33 | — |
+| **Training data** (strategy tuned here — grade inflated by design) | +30.8% | +0.59 | −18.7% |
+| **Test data** (2025 → mid-2026, never touched during development) | **+4.0%** | **+0.27** | −16.9% |
+| **Fully automated version** (no human choices at all) | **−30.2%** | −0.69 | −47.1% |
+| Just holding BTC over the same test period | −22.9% | −0.33 | — |
 
-The curated book made +4% net while BTC and ETH lost 23–25% — and Section 5 stress-tests
-that number until most of it dissolves. Every figure and table regenerates from raw data
-with one command (`make all`); nothing here is the best cell of a search.
+*\*Sharpe ratio = return per unit of risk. Rule of thumb: below ~0.5 is weak, 1+ is good, 2+ is great.*
+
+**Reading the table:** the strategy made a small real profit while BTC crashed — nice.
+But the profit shrank 8× outside the training data, and the version with no human
+judgment *lost* 30%. The gap between those rows is the actual research result.
 
 ![Test window: strategy vs buy-and-hold benchmarks](reports/figures/test_vs_benchmarks.png)
 
 ---
 
-## 1. Problem
+## How it works, step by step
 
-Do crypto perps offer exploitable pairwise mean reversion once you pay real costs — and
-does anything found in-sample survive out-of-sample? Crypto is a natural place to look
-(shared sector flows, retail-driven dislocations, 24/7 data) and a natural place to fool
-yourself (short history, regime changes, correlated everything). The project treats the
-second problem as the interesting one: the validation protocol matters more than the
-strategy, and negative results are reported as results.
+```mermaid
+flowchart LR
+    A["1 · Get data<br/>5.5y of hourly prices<br/>+ real funding fees"] --> B["2 · Find pairs<br/>cointegration test<br/>91 candidates → 1 pass"]
+    B --> C["3 · Size the legs<br/>Kalman filter<br/>hedge ratio"]
+    C --> D["4 · Trade rules<br/>z-score:<br/>enter wide, exit closed"]
+    D --> E["5 · Pay costs<br/>fees + slippage<br/>+ funding"]
+    E --> F["6 · The exam<br/>untouched test data<br/>+ walk-forward"]
+    F --> G["7 · Try to kill it<br/>stress tests"]
+```
 
-## 2. Data
+### Step 1 — Get clean data
 
-- **Source:** Binance USDT-margined perpetuals — 1h OHLCV, funding-rate events, and premium
-  index, ingested into Postgres by `src/ingest/` (idempotent upserts, gap detection, the
-  still-forming bar dropped so no partial data ever enters).
-- **Window:** 2021-01-01 → 2026-07-11; 14 liquid alt/major symbols → 91 candidate pairs.
-- **Funding is real, not approximated:** PnL uses actual stored funding events (cadence
-  varies — e.g. SOL paid 2-hourly during the FTX collapse), floored to the bar they land in.
-- **Known bias, documented:** the universe comes from today's `exchangeInfo`, so coins
-  delisted before mid-2026 could never enter — survivorship at the universe level
-  (`data_provenance.md`).
+5.5 years (2021 → mid-2026) of hourly prices for 14 liquid crypto *perpetual futures*
+from Binance, stored in Postgres. Two honesty rules baked in:
 
-Raw data is never committed; `make all` rebuilds the database from the exchange API.
+- A price bar that's still forming is never stored (it can still change — using it
+  is a subtle form of peeking).
+- Missing data is recorded as missing, never filled in with guesses.
 
-## 3. Method
+*Funding* — the periodic payment between long and short holders of a perp — is
+stored as the **actual historical payments**, because for this strategy it's a real
+cost/income stream, not a footnote.
 
-Five steps, each behind a milestone gate with its own report in `reports/`:
+### Step 2 — Find pairs that are actually connected
 
-1. **Pair screen (train data only).** Engle–Granger cointegration on log closes, run in
-   *both* regression directions and screened on the **worse** p-value, plus an AR(1)
-   half-life filter (1–30 days). Result: **1 of 91 pairs passed** — correlation is
-   abundant, cointegration is rare. The traded book (AVAX/NEAR, ADA/DOT, ADA/LTC) took the
-   screen's top three under relaxed bounds, an explicit discretionary step recorded in
-   `DECISIONS.md`. With 91 tests at α = 0.05, ~4.5 passes are expected by luck — the screen
-   is a candidate filter, and the real arbiter is out-of-sample PnL.
-2. **Time-varying hedge ratio.** A hand-rolled Kalman filter (random-walk α, β state)
-   replaces static OLS. The spread traded is the *innovation*: today's price minus
-   yesterday's hedge prediction — strictly causal by construction. Key finding: at the
-   textbook adaptation speed the filter **whitens away the very mean reversion the screen
-   found**; the grid later chose a 100× slower filter, and that fragility is reported, not
-   hidden (Section 5).
-3. **Signal.** Rolling z-score of the innovation (30-day window): enter at |z| ≥ 2.5, exit
-   at 0.5, stop and dis-arm beyond 4.0. Positions are 1:β dollar-hedged, frozen at entry,
-   and **execute one bar after the signal** — a bar's close can never buy itself.
-4. **Costs.** 5 bps taker fee + 2 bps slippage per leg per side, plus actual funding
-   transfers. The decomposition is exactly additive: net = gross − fees − slippage + funding.
-   Costs run ~4–5% of capital per year at the book's ~39× annual turnover — same order as
-   the edge itself.
-5. **Validation.** All parameters live in a pre-declared 72-config grid (`config.yaml`)
-   tuned only on 2021–2024; 2025+ stayed untouched until the very end. Alongside the frozen
-   split, a **fully-automated walk-forward** re-screens pairs and re-tunes quarterly on a
-   rolling 2-year window — the honest test of whether the *pipeline*, not the curated book,
-   has an edge.
+Two prices being correlated is not enough — almost everything in crypto moves
+together. The strategy needs *cointegration*: a statistical test (Engle–Granger)
+that asks "does the gap between these two keep returning to a stable level?"
 
-**Look-ahead discipline:** every rolling statistic and fit is covered by
-mutate-the-future tests — perturb data after bar *t*, assert bit-identical outputs at *t*
-(58 tests, `uv run pytest`).
+- All **91 possible pairs** from the 14 coins were tested — on training data only.
+- Result: **only 1 pair passed cleanly** (AVAX/NEAR). Correlation is everywhere;
+  real connectedness is rare.
+- Honesty check: testing 91 pairs at a 5% significance level means **~4.5 pairs
+  would pass by pure luck**. So even the winner might be a fluke — only the test
+  data can tell.
 
-![AVAX/NEAR spread and z-score](reports/figures/spread_AVAX_NEAR.png)
+The traded book took the screen's top three (AVAX/NEAR, ADA/DOT, ADA/LTC) under
+slightly relaxed rules — a human judgment call, recorded in `DECISIONS.md`. Remember
+this detail; it becomes the plot twist later.
 
-## 4. Results
+![AVAX/NEAR: the spread and the time-varying hedge ratio](reports/figures/pair_diagnostics_AVAX_NEAR.png)
 
-**Frozen split.** Train Sharpe +0.59 → test Sharpe +0.27; +4.0% net over 18 untouched
-months in which BTC fell 22.9% and ETH 25.1%. Hit rate held at 60% on both sides of the
-split; the decay shows up as gross edge shrinking toward the cost floor.
+### Step 3 — Decide how much of each coin (the hedge ratio)
 
-![Train/test equity, split at 2024-12-31](reports/figures/static_split.png)
+If you buy $1 of AVAX, how much NEAR do you short so that market moves cancel out?
+That number (*beta*, the hedge ratio) drifts over time, so it's estimated with a
+*Kalman filter* — a standard algorithm that updates its estimate a little with each
+new price, instead of assuming one fixed number forever.
 
-**Walk-forward.** The automated pipeline — same signals, engine, and costs, but
-re-screening and re-tuning quarterly with no human in the loop — lost **−30.2% over 3.5
-years** (12 traded folds, 3 correctly held cash when nothing passed). Books were unstable
-fold to fold, and the worst fold was short a DOGE spread through the November-2024 meme
-rally.
+Anti-cheating rule: today's gap is always measured with **yesterday's** estimate.
+Using today's would smuggle today's price into its own trading signal.
 
-![Walk-forward stitched out-of-sample equity](reports/figures/walkforward.png)
+### Step 4 — The trading rules
 
-**The conclusion the two results force:** what edge exists came from the *human curation
-step* at pair selection — the one part that doesn't scale and can't be validated
-statistically. The automated version of the same idea loses money.
+The gap is standardized into a *z-score*: "how unusual is today's gap, in standard
+deviations, vs the last 60 days?" Then three simple rules:
 
-## 5. Robustness — how the +4% holds up (mostly, it doesn't)
+| Rule | Meaning |
+|---|---|
+| Enter when \|z\| ≥ 2.5 | the gap is unusually wide — bet on it closing |
+| Exit when \|z\| ≤ 0.5 | the gap has closed — take the profit |
+| Stop out at \|z\| ≥ 4.0 | the gap is *so* wide the relationship may be broken — get out |
 
-Post-hoc stresses on the frozen config, full tables in `reports/m7_robustness.md`:
+One more anti-cheating rule: a signal computed at 3pm trades at **4pm**, never at
+3pm. A price bar can never buy itself.
 
-- **Costs: the edge dies at 2× fees** (+4.0% → −0.2%; −4.3% at 3×). Maker execution or
-  lower turnover isn't an optimization — it's existential.
-- **Tuning was mostly luck.** Spearman rank correlation between train and test Sharpe
-  across all 72 configs: **+0.10**. The best test config had a *negative* train Sharpe.
-- **One pair carried everything.** Leave-one-pair-out: remove ADA/LTC and the test window
-  nets **−0.24%**.
-- **"Market-neutral" wasn't, in PnL terms.** Dollar-hedged per position, yet the test
-  window splits **+11.5% in trailing-BTC-up regimes vs −7.2% in BTC-down** — alt mean
-  reversion held when the sector ground up and broke when it sold off together.
-  Dollar-neutrality is not factor-neutrality.
-- **Cointegration is episodic.** The book pairs pass a rolling 1-year Engle–Granger in only
-  **5–11% of windows** (2022–2026) — and ADA/LTC's single strong episode is exactly the
-  profitable Q1-2025 window. The full-sample screen detected an average property that
-  rarely holds in any given year.
+![AVAX/NEAR: z-score and the resulting positions](reports/figures/spread_AVAX_NEAR.png)
 
-![Grid: train Sharpe vs test Sharpe, chosen config starred](reports/figures/grid_train_vs_test.png)
-![Rolling 1y Engle–Granger p-values per book pair](reports/figures/rolling_eg.png)
+### Step 5 — Pay real costs
 
-The complete hand-written failure analysis — seven negative findings, each backed by a
-table in this repo — is `reports/m7_failure_analysis.md`.
+Every trade pays exchange fees (5 bps) + price impact (2 bps) per leg, plus the
+actual historical funding payments. The accounting is exactly additive —
+`net = gross − fees − slippage + funding` — so you can always see what ate the profit.
 
-## 6. Limitations
+This matters more than it sounds: costs run **~4–5% of capital per year**, the same
+size as the edge itself. The chart below shows gross profit vs what's left after costs:
 
-- **Survivorship** in the symbol universe (delisted coins never enter).
-- **Multiple testing:** 91 pairs at 5%, compounded across walk-forward folds.
-- **Execution model:** 1h bars, next-bar fills, flat bps slippage, no intrabar stop-outs
-  (a 3σ spike inside a bar is invisible), no margin or liquidation modelling.
-- **No borrow frictions** beyond funding.
-- All accounting is arithmetic on constant unit capital — deliberately simple and exactly
-  additive, but it ignores compounding.
+![Portfolio: gross vs net vs cumulative costs](reports/figures/costs_decomposition.png)
 
-## 7. Next steps (hypotheses, not claims)
+### Step 6 — The exam (this is the whole point)
 
-- **Price entries off round-trip cost** and quote maker-side — the cost stress says this is
-  the highest-leverage dial.
-- **Basket / cross-sectional stat-arb** instead of bilateral pairs — episodic pairwise
-  cointegration suggests a common-factor structure that pairs capture badly.
-- **A sector-factor regime gate**, given the BTC-regime split above.
-- **Paper-trade forward** and compare realised vs backtested PnL (implementation shortfall).
+All parameters were tuned **only on 2021–2024 data**, choosing from a grid of 72
+pre-declared combinations (declaring them upfront prevents endless "just one more
+tweak" fishing). Then, two exams:
 
-Each would be a training-window experiment first, under the same rules as everything here.
+**Exam A — the frozen split.** Run the tuned strategy on 2025 → mid-2026, data it
+had never seen. Result: profit shrank from +30.8% to **+4.0%**, Sharpe from +0.59
+to +0.27. Real, but thin.
 
-## 8. The equity replication (M10) — same pipeline, second asset class
+![Equity curve, split at the train/test boundary](reports/figures/static_split.png)
 
-The whole pipeline re-ran on **24 US large-caps (276 pairs, daily bars,
-2021–2026, same split)** under a pre-registered plan (`M10_PLAN.md`) with three
-hypotheses committed before any data was pulled — and the book selected by a
-**mechanical top-3 rule instead of human curation**, deliberately removing the
-step M7 credited with the crypto edge. Verdicts (`reports/m10_crossasset.md`):
+**Exam B — the walk-forward.** Rebuild *everything* automatically every quarter —
+re-pick pairs, re-tune parameters, no human involved — and only count profits on
+each quarter it hadn't seen yet. Result: **−30.2% over 3.5 years.**
 
-- **Prevalence (H1):** 13/276 pairs pass vs crypto's 1/91 — but ~13.8 passes
-  were expected by luck. Neither market beats its multiple-testing base rate.
-- **Stability (H2): refuted.** Rolling 1y cointegration pass rates were **0–4%**
-  vs crypto's 5–11% — equity cointegration was *more* episodic, not less.
-- **Profitability (H3):** the untouched test window looks great (+13.7% net,
-  Sharpe +1.02) and the diagnostics take it apart: the grid's train→test rank
-  correlation was **−0.30**, 97% of configs were positive OOS (a generous tape,
-  not a found edge), the one economically-sensible pair (MA~V) *lost* money
-  while the two luck-candidates printed — and **SPY buy-and-hold beat the book
-  risk-adjusted** (+1.11 vs +1.02).
-- The fairest cross-market comparator, the automated walk-forward: crypto
-  **−30.2%** → equities **+3.3%** (Sharpe +0.12) over 3.5 years. Thin equity
-  frictions stop the bleeding (the edge survives 3× costs, unlike crypto's
-  death at 2×) — and the pipeline still earns ~nothing. The v1 conclusion
-  generalizes: **it manufactures candidates, not edge, in both asset classes.**
+![Walk-forward: the automated pipeline loses money](reports/figures/walkforward.png)
 
-![Equity test window: strategy vs SPY buy-and-hold](reports/figures/m10_test_vs_benchmarks.png)
+**The uncomfortable conclusion:** the only version that made money is the one where
+a human hand-picked the pairs (Step 2's judgment call). The fully automated version
+loses. So whatever edge exists lives in the one step that can't be validated
+statistically.
 
-## 9. Reproduce
+### Step 7 — Try to kill the result (stress tests)
+
+A +4% result this thin deserves hostility. Each test below is a different way of
+asking "was it luck?":
+
+| Stress test | Question | Answer |
+|---|---|---|
+| Double the fees | Would slightly worse execution kill it? | **Yes.** +4.0% → −0.2% at 2× costs |
+| Compare all 72 parameter combos | Did tuning actually find skill? | **Mostly luck.** Train vs test ranking correlation: +0.10 (≈ random). The best test combo had a *negative* training score |
+| Remove one pair at a time | Was it one lucky pair? | **Yes.** Without ADA/LTC: −0.24% |
+| Split by market direction | Truly market-neutral? | **No.** +11.5% when BTC trended up, −7.2% when down |
+| Re-test cointegration each year | Was the "connection" stable? | **No.** The pairs pass the test in only 5–11% of rolling 1-year windows |
+
+![All 72 configs: training score vs test score — the cloud has no shape](reports/figures/grid_train_vs_test.png)
+![Rolling cointegration: the relationship comes and goes](reports/figures/rolling_eg.png)
+
+The full hand-written post-mortem: [`reports/m7_failure_analysis.md`](reports/m7_failure_analysis.md).
+
+---
+
+## Round 2: the same experiment on US stocks
+
+Everything above screams "crypto is a bad neighborhood for this." So the entire
+pipeline was re-run on **24 large US stocks** (banks, oil, semiconductors, payments…,
+276 pairs, daily bars, same dates) — with three predictions written down and
+committed to git *before* touching any stock data, and with the pair selection made
+**fully mechanical** this time (removing the human judgment step on purpose).
+
+| Prediction | What happened |
+|---|---|
+| More stock pairs will pass the cointegration test than crypto's 1/91 | Yes — 13/276. But ~13.8 would pass by luck, so it's *exactly* the luck rate |
+| Stock relationships will be more stable than crypto's | **Wrong.** They passed the rolling 1-year re-test in 0–4% of windows — *worse* than crypto's 5–11% |
+| More cointegration ≠ more profit (pairs trading in stocks is a 40-year-old crowded trade) | Supported, the interesting way — see below |
+
+The stock test window printed **+13.7% (Sharpe +1.02)** — better than training! But
+the diagnostics take it apart: 97% of *all* parameter combos were profitable in that
+window (a rising tide, not a found edge), the one economically sensible pair
+(Mastercard/Visa) actually **lost** money while two statistical accidents earned
+everything, and **just buying the S&P 500 beat the strategy anyway** (+29.6%,
+Sharpe +1.11).
+
+The cleanest cross-market fact: the automated walk-forward went from **−30.2%**
+(crypto) to **+3.3%** (stocks). Stock trading costs are ~10× smaller, so the
+strategy stops bleeding — but it still earns roughly nothing.
+
+![Stocks, test window: strategy vs just buying SPY](reports/figures/m10_test_vs_benchmarks.png)
+
+Full comparison: [`reports/m10_crossasset.md`](reports/m10_crossasset.md).
+
+---
+
+## What I'd tell you over coffee
+
+- **Cointegration is rare and unstable** — in both markets, the pairs that pass a
+  4-year test almost never pass any individual year. You're chasing an average that
+  rarely exists in the present.
+- **Costs decide everything in crypto; signal decides everything in stocks.** The
+  crypto edge dies at 2× fees; the stock edge survives 3× fees but barely exists.
+- **One good out-of-sample number proves very little.** The stock study's Sharpe
+  +1.02 looks great until you notice the whole parameter grid was profitable and
+  the index did better.
+- **The honest deliverable is the gap** between the tuned backtest and the untouched
+  test — not the backtest itself. Anyone showing you only the first number is
+  selling something.
+
+**Known limitations** (all documented in the reports): only coins/stocks that still
+exist today could enter the universe (survivorship bias), hourly/daily bars can't
+see intrabar spikes, no margin/liquidation modelling, and 91 or 276 statistical
+tests guarantee some lucky passes.
+
+---
+
+## Jargon translator
+
+| Term | Plain English |
+|---|---|
+| Statistical arbitrage ("stat arb") | Betting on statistical patterns between prices, not on news or fundamentals |
+| Perpetual future ("perp") | A crypto contract that tracks a coin's price and never expires; the main way to short crypto |
+| Funding rate | Periodic payment between longs and shorts that keeps a perp glued to the spot price |
+| Cointegration | Two prices whose *gap* keeps returning to a stable level (the dog-on-a-leash property) |
+| Hedge ratio / beta | How much of asset B offsets $1 of asset A |
+| Kalman filter | An algorithm that keeps updating an estimate (here: the hedge ratio) as new data arrives |
+| Z-score | "How unusual is this value?" measured in standard deviations from recent average |
+| Slippage | The price moves against you while your order executes |
+| Sharpe ratio | Return divided by volatility — return per unit of risk taken |
+| Drawdown | The worst peak-to-bottom loss along the way |
+| In-sample / out-of-sample | Data used to build the strategy / data held back to grade it honestly |
+| Walk-forward | Repeatedly re-building the strategy on the past and grading it on the next unseen chunk |
+| Look-ahead bias | Any leak of future information into a past decision — the #1 way backtests lie |
+| Survivorship bias | Only assets that survived until today are in your data, which flatters history |
+
+---
+
+## Run it yourself
 
 ```bash
 cp .env.example .env   # local Postgres credentials
-make all               # ingest → tests → M2…M7 → every table and figure
+make all               # crypto study: ingest → tests → every table and figure (~3h)
+make all-equities      # stock study: same pipeline, runs in minutes
 ```
 
-Requires Docker (Postgres 16 on host port 5433) and [uv](https://docs.astral.sh/uv/); Python 3.11+.
-Ingestion pulls ~5.5 years of 1h data from Binance (~40 min at polite rate limits) and the
-validation stage runs the grid + walk-forward (~2 h). Individual stages: `make ingest`,
-`make pairs`, `make signals`, `make backtest`, `make validate`, `make metrics`, `make report`.
-The equity study reproduces with `make all-equities` (minutes — daily bars).
+Requires Docker (Postgres 16 on host port 5433), [uv](https://docs.astral.sh/uv/), Python 3.11+.
+Every number and chart in this README regenerates from raw exchange data — nothing
+is hand-picked from a bigger search. 70 tests guard against look-ahead bias, including
+"mutate the future" tests: change data after time T and assert nothing before T changes.
 
-## 10. Repo map
+## Where everything lives
 
-| path | what it is |
+| Path | What it is |
 |---|---|
-| `SPEC.md` | project spec — milestones, guardrails, definitions of done |
-| `DECISIONS.md` | running log of every methodology choice and trade-off |
-| `config.yaml` | every parameter, pre-declared — nothing tunable is hard-coded |
-| `src/ingest/` → `src/report/` | one package per milestone: data, pairs, signals, backtest, validation, metrics, robustness |
-| `reports/` | committed per-milestone reports (auto-generated tables + hand-written notes) |
-| `reports/m7_failure_analysis.md` | **the honest section — start here** |
-| `M10_PLAN.md` → `reports/m10_crossasset.md` | pre-registered equity replication: plan, then verdicts |
-| `config_equities.yaml`, `reports/m10/` | the equity study's frozen parameters and generated tables |
-| `tests/` | 58 tests; look-ahead guards are bit-identical mutate-the-future tests |
+| `SPEC.md` | The project's rules of engagement, written before the code |
+| `DECISIONS.md` | Every methodology choice + why, in chronological order |
+| `config.yaml` / `config_equities.yaml` | Every parameter, pre-declared — nothing tunable hides in code |
+| `src/` | The pipeline, one package per stage (ingest → pairs → signals → backtest → validate → metrics → report) |
+| `reports/` | Auto-generated result tables + hand-written analysis per milestone |
+| `reports/m7_failure_analysis.md` | **The honest post-mortem — best single read** |
+| `M10_PLAN.md` → `reports/m10_crossasset.md` | The stock replication: predictions first, verdicts after |
+| `tests/` | 70 tests; the look-ahead guards are the interesting ones |
